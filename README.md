@@ -6,8 +6,40 @@
   <img src="https://img.shields.io/badge/Expo-54-black?logo=expo&logoColor=white" />
   <img src="https://img.shields.io/badge/React Native-0.81-61DAFB?logo=react&logoColor=white" />
   <img src="https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white" />
+  <img src="https://img.shields.io/badge/versão-1.0.0-10B981" />
   <img src="https://img.shields.io/badge/plataforma-Android%20%7C%20iOS-green" />
 </p>
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/17826c65-13e3-4b50-9d30-432c6a404e96" width="22%" />
+  <img src="https://github.com/user-attachments/assets/2cd2ceba-11b1-4b14-a972-5e756a54d394" width="22%" />
+  <img src="https://github.com/user-attachments/assets/9d41910f-24b7-4110-8cf8-3634c0e416a0" width="22%" />
+  <img src="https://github.com/user-attachments/assets/f7bc00a4-5959-4aa8-a9b6-2b703c42227b" width="22%" />
+</p>
+
+---
+
+## 🎉 v1.0.0 — Primeiro Release
+
+> **Março de 2026** · Lançamento inicial do Contador
+
+Este é o primeiro release oficial do **Contador**, um app pensado para quem quer construir hábitos sólidos e acompanhar cada dia de progresso de forma visual e motivadora. Desenvolvido do zero com React Native + Expo, o app nasce com um conjunto completo de funcionalidades para apoiar qualquer rotina — seja academia, meditação, leitura ou qualquer meta pessoal.
+
+### 🆕 O que há nesta versão
+
+- **Contador diário com anel de progresso animado** — visualize seu avanço de forma imediata ao marcar um dia concluído.
+- **Metas flexíveis** — escolha entre ciclos de 7, 14, 30, 60 ou 100 dias conforme o seu ritmo.
+- **Painel de estatísticas** — acompanhe sua sequência atual, seu recorde pessoal e sua taxa de sucesso em tempo real.
+- **Calendário com histórico completo** — veja exatamente quais dias foram marcados e quando ocorreram resets ao longo dos meses.
+- **Contagem regressiva para eventos** — defina uma data alvo e veja os dias, horas e segundos restantes.
+- **Frases motivacionais rotativas** — uma mensagem de incentivo diferente a cada marco alcançado.
+- **Desfazer a última ação** — cometeu um engano? Reverta o registro do dia com um único toque.
+- **Notificações inteligentes** — lembretes diários em horário configurável e mensagens especiais ao atingir marcos de 7, 14, 21, 30, 60 e 100 dias.
+- **100% offline** — todos os dados ficam salvos localmente no dispositivo, sem necessidade de conta ou internet.
+
+### 📸 Screenshots
+
+> Veja as telas do app no topo deste README.
 
 ---
 
