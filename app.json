@@ -48,6 +48,23 @@
           "color": "#10B981",
           "sounds": []
         }
+      ],
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "CounterWidget",
+              "label": "Contador de Dias",
+              "description": "Veja o progresso do seu hábito diretamente na tela inicial.",
+              "minWidth": "160dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 2,
+              "targetCellHeight": 2,
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
       ]
     ],
     "experiments": {

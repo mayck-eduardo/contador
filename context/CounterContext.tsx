@@ -9,6 +9,7 @@ import {
   triggerMilestoneNotification,
   cancelAllNotifications,
 } from '../services/NotificationService';
+import { WidgetService } from '../services/WidgetService';
 
 export type ActionType = 'ADD' | 'RESET';
 
@@ -190,8 +191,11 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     if (!isLoading) {
       AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state)).catch(console.error);
+      const today = getToday();
+      const hasAddedToday = state.dailyStatus[today] === 'ADD';
+      WidgetService.updateWidget(state.totalCount, state.goalDays, hasAddedToday);
     }
-  }, [state, isLoading]);
+  }, [state.totalCount, state.goalDays, state.dailyStatus, isLoading]);
 
   const addAction = () => {
     const today = getToday();
