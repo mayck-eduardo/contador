@@ -1,9 +1,13 @@
-import 'expo-router/entry-classic';
+import 'react-native-gesture-handler';
 import { registerWidgetTaskHandler } from 'react-native-android-widget';
-import { registerWidgets, widgetTaskHandler } from './widgets';
+import { widgetTaskHandler } from './widgets';
 
-// Register widget layouts
-registerWidgets();
+// Register widgets early to ensure they are available to the system
+try {
+  registerWidgetTaskHandler(widgetTaskHandler);
+} catch (error) {
+  console.warn('Failed to register widget task handler.', error);
+}
 
-// Register background task handler
-registerWidgetTaskHandler(widgetTaskHandler);
+// Initialize Expo Router
+import 'expo-router/entry';

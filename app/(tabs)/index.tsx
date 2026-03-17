@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -12,7 +12,7 @@ import Svg, { Circle } from 'react-native-svg';
 import { useCounter } from '../../context/CounterContext';
 import { differenceInDays, format, startOfDay } from 'date-fns';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useState } from 'react';
+import ConfettiCannon from 'react-native-confetti-cannon';
 
 const RING_SIZE = 240;
 const STROKE_WIDTH = 14;
@@ -51,6 +51,7 @@ export default function CounterScreen() {
   } = useCounter();
 
   const [showPicker, setShowPicker] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
 
   const today = format(new Date(), 'yyyy-MM-dd');
   const hasAddedToday = dailyStatus[today] === 'ADD';
@@ -88,6 +89,12 @@ export default function CounterScreen() {
   const handleAdd = () => {
     addAction();
     triggerPulse();
+    
+    // Check if the new count (totalCount + 1) is a milestone
+    const newCount = totalCount + 1;
+    if ([7, 14, 21, 30, 60, 100].includes(newCount) || newCount === goalDays) {
+      setShowConfetti(true);
+    }
   };
 
   const confirmReset = () => {
@@ -245,6 +252,17 @@ export default function CounterScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+      
+      {showConfetti && (
+        <ConfettiCannon
+          count={200}
+          origin={{ x: 200, y: 0 }}
+          autoStart={true}
+          fadeOut={true}
+          fallSpeed={3000}
+          onAnimationEnd={() => setShowConfetti(false)}
+        />
+      )}
     </View>
   );
 }

@@ -137,30 +137,36 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const loadState = async () => {
       try {
         const stored = await AsyncStorage.getItem(STORAGE_KEY);
+        let parsed = null;
         if (stored) {
-          const parsed = JSON.parse(stored);
+          parsed = JSON.parse(stored);
+        } else {
+          const old = await AsyncStorage.getItem('@contador_state');
+          if (old) parsed = JSON.parse(old);
+        }
+
+        if (parsed) {
+          // Check if streak was broken (missed yesterday)
+          const today = getToday();
+          const yesterday = format(new Date(Date.now() - 86400000), 'yyyy-MM-dd');
+          
+          let updatedTotalCount = parsed.totalCount ?? 0;
+          const hasAddedToday = parsed.dailyStatus?.[today] === 'ADD';
+          const hasAddedYesterday = parsed.dailyStatus?.[yesterday] === 'ADD';
+          
+          if (!hasAddedToday && !hasAddedYesterday && Object.keys(parsed.dailyStatus || {}).length > 0) {
+              updatedTotalCount = 0; // Streak reset!
+          }
+
           setState((prev) => ({
             ...prev,
             ...parsed,
+            totalCount: updatedTotalCount, // Using the validated or reset count
             notificationsEnabled: parsed.notificationsEnabled ?? true,
             notificationHour: parsed.notificationHour ?? 20,
             watchedApps: parsed.watchedApps ?? [],
             goalDays: parsed.goalDays ?? 14,
           }));
-        } else {
-          // Try migrating from old key
-          const old = await AsyncStorage.getItem('@contador_state');
-          if (old) {
-            const parsed = JSON.parse(old);
-            setState((prev) => ({
-              ...prev,
-              ...parsed,
-              notificationsEnabled: parsed.notificationsEnabled ?? true,
-              notificationHour: parsed.notificationHour ?? 20,
-              watchedApps: parsed.watchedApps ?? [],
-              goalDays: parsed.goalDays ?? 14,
-            }));
-          }
         }
       } catch (e) {
         console.error('Failed to load state', e);
@@ -197,12 +203,34 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [state.totalCount, state.goalDays, state.dailyStatus, isLoading]);
 
+  const getConsecutiveStreak = (status: DailyStatus) => {
+    let streak = 0;
+    let checkDate = new Date();
+    // Start checking from today
+    while (true) {
+      const dateStr = format(checkDate, 'yyyy-MM-dd');
+      // If we are checking today and they haven't added yet, it's not a broken streak, we just keep digging
+      if (status[dateStr] === 'ADD') {
+        streak++;
+        checkDate.setDate(checkDate.getDate() - 1);
+      } else if (dateStr === getToday()) {
+        checkDate.setDate(checkDate.getDate() - 1);
+      } else {
+        break; // A past day is missing, streak broken
+      }
+    }
+    return streak;
+  };
+
   const addAction = () => {
     const today = getToday();
     if (state.dailyStatus[today] === 'ADD') return;
 
     setState((prev) => {
-      const newCount = prev.totalCount + 1;
+      // Re-evaluate consecutive streak before adding today
+      const streakBeforeToday = getConsecutiveStreak(prev.dailyStatus);
+      const newCount = streakBeforeToday + 1;
+      
       if (MILESTONES.includes(newCount) && prev.notificationsEnabled) {
         triggerMilestoneNotification(newCount);
       }
