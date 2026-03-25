@@ -1,494 +1,788 @@
-import React, { useEffect, useRef, useState } from 'react';
+/**
+ * Tela Inicial — Dashboard com Edit Modal e Past Days Modal
+ */
+
+import React, { useRef, useState, useEffect } from 'react';
 import {
-  StyleSheet,
-  View,
-  Text,
-  TouchableOpacity,
-  Alert,
-  Animated,
-  Easing,
+  StyleSheet, View, Text, TouchableOpacity, Alert,
+  ScrollView, Modal, TextInput, Animated,
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
-import { useCounter } from '../../context/CounterContext';
-import { differenceInDays, format, startOfDay } from 'date-fns';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { useCounter, DayCounter, CountMode } from '../../context/CounterContext';
+import { Ionicons } from '@expo/vector-icons';
+import { format, subDays } from 'date-fns';
 import ConfettiCannon from 'react-native-confetti-cannon';
 
-const RING_SIZE = 240;
-const STROKE_WIDTH = 14;
-const RADIUS = (RING_SIZE - STROKE_WIDTH) / 2;
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+// ── Constantes ────────────────────────────────────────────────────────────────
+const COUNTER_COLORS = ['#10B981','#818CF8','#F59E0B','#EF4444','#06B6D4','#E879F9','#FB923C'];
+const COUNTER_EMOJIS = ['🎯','🔥','💪','📚','🏃','💧','🧘','🎮','✅','⭐','🚫','💊'];
+const GOAL_OPTIONS: (number | null)[] = [null, 7, 14, 30, 60, 100, 365];
 
-const GOAL_OPTIONS = [7, 14, 30, 60, 100];
+const RING = 64;
+const STROKE = 6;
+const R = (RING - STROKE) / 2;
+const CIRC = 2 * Math.PI * R;
 
-const PHRASES = [
-  'Um dia de cada vez. Você consegue! 💪',
-  'Cada dia vencido é uma vitória real.',
-  'Disciplina é escolher entre o que quer agora e o que quer mais.',
-  'A mudança começa com uma decisão. Você já tomou a sua.',
-  'Você está construindo uma versão melhor de si mesmo.',
-  'Pequenas vitórias diárias levam a grandes conquistas.',
-  'Orgulhe-se do caminho, não só do destino.',
-  'Resistir hoje significa liberdade amanhã.',
-];
+// ── Mini anel ─────────────────────────────────────────────────────────────────
+function ProgressRing({
+  percent, color, count,
+}: { percent: number | null; color: string; count: number }) {
+  const offset = percent !== null ? CIRC * (1 - Math.min(percent / 100, 1)) : CIRC;
+  return (
+    <View style={{ width: RING, height: RING, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={RING} height={RING} style={{ position: 'absolute' }}>
+        <Circle cx={RING/2} cy={RING/2} r={R} stroke="#1E1E24" strokeWidth={STROKE} fill="none" />
+        {percent !== null && (
+          <Circle
+            cx={RING/2} cy={RING/2} r={R}
+            stroke={color} strokeWidth={STROKE} fill="none"
+            strokeDasharray={CIRC} strokeDashoffset={offset}
+            strokeLinecap="round" rotation="-90" origin={`${RING/2},${RING/2}`}
+          />
+        )}
+        {percent === null && (
+          <Circle
+            cx={RING/2} cy={RING/2} r={R}
+            stroke={color + '55'} strokeWidth={STROKE} fill="none"
+            strokeDasharray="4 6" rotation="-90" origin={`${RING/2},${RING/2}`}
+          />
+        )}
+      </Svg>
+      <Text style={{ fontSize: 16, fontWeight: '900', color, fontVariant: ['tabular-nums'] }}>
+        {count}
+      </Text>
+    </View>
+  );
+}
 
-const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+// ── EditModal ─────────────────────────────────────────────────────────────────
+function EditModal({
+  counter, visible, onClose, onSave,
+}: {
+  counter: DayCounter;
+  visible: boolean;
+  onClose: () => void;
+  onSave: (updates: Partial<Pick<DayCounter, 'name'|'emoji'|'color'|'mode'|'goalDays'>>) => void;
+}) {
+  const [name, setName] = useState(counter.name);
+  const [emoji, setEmoji] = useState(counter.emoji);
+  const [color, setColor] = useState(counter.color);
+  const [mode, setMode] = useState<CountMode>(counter.mode);
+  const [goal, setGoal] = useState<number | null>(counter.goalDays);
 
-export default function CounterScreen() {
-  const {
-    totalCount,
-    dailyStatus,
-    lastAction,
-    targetDate,
-    goalDays,
-    personalRecord,
-    currentStreak,
-    addAction,
-    resetAction,
-    undoAction,
-    setTargetDate,
-    setGoalDays,
-  } = useCounter();
-
-  const [showPicker, setShowPicker] = useState(false);
-  const [showConfetti, setShowConfetti] = useState(false);
-
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const hasAddedToday = dailyStatus[today] === 'ADD';
-  const canUndo = lastAction && lastAction.date === today;
-
-  // Progress ring animation
-  const progressAnim = useRef(new Animated.Value(0)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  const progress = Math.min(totalCount / goalDays, 1);
-
+  // Sync when counter changes
   useEffect(() => {
-    Animated.timing(progressAnim, {
-      toValue: progress,
-      duration: 1000,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [progress]);
+    if (visible) {
+      setName(counter.name); setEmoji(counter.emoji); setColor(counter.color);
+      setMode(counter.mode); setGoal(counter.goalDays);
+    }
+  }, [visible, counter.id]);
 
-  const strokeDashoffset = progressAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [CIRCUMFERENCE, 0],
-  });
-
-  // Pulse on add
-  const triggerPulse = () => {
-    pulseAnim.setValue(1);
-    Animated.sequence([
-      Animated.timing(pulseAnim, { toValue: 1.12, duration: 150, useNativeDriver: true }),
-      Animated.timing(pulseAnim, { toValue: 1, duration: 150, useNativeDriver: true }),
-    ]).start();
+  const handleSave = () => {
+    if (!name.trim()) { Alert.alert('Nome obrigatório'); return; }
+    onSave({ name: name.trim(), emoji, color, mode, goalDays: goal });
+    onClose();
   };
 
-  const handleAdd = () => {
-    addAction();
-    triggerPulse();
-    
-    // Check if the new count (totalCount + 1) is a milestone
-    const newCount = totalCount + 1;
-    if ([7, 14, 21, 30, 60, 100].includes(newCount) || newCount === goalDays) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={ms.overlay}>
+        <ScrollView style={ms.sheet} contentContainerStyle={ms.sheetContent} showsVerticalScrollIndicator={false}>
+          <View style={ms.handle} />
+          <View style={ms.sheetHeader}>
+            <Text style={ms.sheetTitle}>Editar Contador</Text>
+            <TouchableOpacity onPress={onClose}>
+              <Ionicons name="close" size={22} color="#71717A" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Preview */}
+          <View style={[ms.preview, { borderColor: color + '55' }]}>
+            <View style={[ms.previewEmoji, { backgroundColor: color + '20' }]}>
+              <Text style={{ fontSize: 24 }}>{emoji}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[ms.previewName, { color }]} numberOfLines={1}>{name || 'Nome do contador'}</Text>
+              <Text style={ms.previewMeta}>
+                {mode === 'streak' ? '🔥 Sequência' : '📊 Contagem'} · {goal !== null ? `Meta ${goal}d` : 'Sem meta'}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={ms.label}>Nome</Text>
+          <TextInput
+            style={ms.input}
+            placeholder="Ex: Sem cigarro, Exercício..."
+            placeholderTextColor="#3F3F46"
+            value={name}
+            onChangeText={setName}
+            returnKeyType="done"
+          />
+
+          <Text style={ms.label}>Emoji</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}
+            contentContainerStyle={{ gap: 8 }}>
+            {COUNTER_EMOJIS.map((e) => (
+              <TouchableOpacity key={e}
+                style={[ms.chip, emoji === e && { borderColor: color, backgroundColor: color + '20' }]}
+                onPress={() => setEmoji(e)}>
+                <Text style={{ fontSize: 22 }}>{e}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          <Text style={ms.label}>Cor</Text>
+          <View style={ms.colorRow}>
+            {COUNTER_COLORS.map((clr) => (
+              <TouchableOpacity key={clr}
+                style={[ms.colorDot, { backgroundColor: clr }, color === clr && ms.colorDotSel]}
+                onPress={() => setColor(clr)}>
+                {color === clr && <Ionicons name="checkmark" size={14} color="#fff" />}
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={ms.label}>Modo</Text>
+          <View style={{ gap: 8, marginBottom: 20 }}>
+            {([
+              { m: 'streak' as CountMode, e: '🔥', t: 'Sequência', d: 'Dias consecutivos — perde um, volta a zero', ac: '#042F2E', bc: '#10B981' },
+              { m: 'simple' as CountMode, e: '📊', t: 'Contagem', d: 'Acumula todos os dias marcados, sem penalidade', ac: '#1E1B4B', bc: '#818CF8' },
+            ]).map((opt) => (
+              <TouchableOpacity key={opt.m}
+                style={[ms.modeChip, mode === opt.m && { borderColor: opt.bc, backgroundColor: opt.ac }]}
+                onPress={() => setMode(opt.m)} activeOpacity={0.8}>
+                <Text style={{ fontSize: 18 }}>{opt.e}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[ms.modeTitle, mode === opt.m && { color: opt.bc }]}>{opt.t}</Text>
+                  <Text style={ms.modeDesc}>{opt.d}</Text>
+                </View>
+                <View style={[ms.radio, mode === opt.m && { borderColor: opt.bc }]}>
+                  {mode === opt.m && <View style={[ms.radioInner, { backgroundColor: opt.bc }]} />}
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={ms.label}>Meta de dias</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 28 }}
+            contentContainerStyle={{ gap: 8 }}>
+            {GOAL_OPTIONS.map((g) => (
+              <TouchableOpacity key={String(g)}
+                style={[ms.goalChip, goal === g && { backgroundColor: color + '22', borderColor: color }]}
+                onPress={() => setGoal(g)}>
+                <Text style={[ms.goalChipText, goal === g && { color }]}>
+                  {g === null ? 'Sem meta' : `${g}d`}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          <View style={ms.btns}>
+            <TouchableOpacity style={ms.cancelBtn} onPress={onClose}>
+              <Text style={ms.cancelText}>Cancelar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[ms.saveBtn, { backgroundColor: color }]} onPress={handleSave}>
+              <Ionicons name="checkmark" size={18} color="#fff" />
+              <Text style={ms.saveText}>Salvar</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+const ms = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: '#111113', borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: '#1E1E24', maxHeight: '95%' },
+  sheetContent: { padding: 24 },
+  handle: { width: 40, height: 4, backgroundColor: '#27272A', borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  sheetTitle: { fontSize: 20, fontWeight: '800', color: '#FAFAFA' },
+  preview: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#18181B', borderRadius: 16, padding: 14, borderWidth: 1, marginBottom: 20 },
+  previewEmoji: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  previewName: { fontSize: 15, fontWeight: '700' },
+  previewMeta: { fontSize: 11, color: '#71717A', marginTop: 2 },
+  label: { fontSize: 11, color: '#71717A', fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 },
+  input: { backgroundColor: '#18181B', borderWidth: 1, borderColor: '#27272A', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13, fontSize: 15, color: '#FAFAFA', marginBottom: 20 },
+  chip: { width: 46, height: 46, borderRadius: 13, backgroundColor: '#18181B', borderWidth: 1, borderColor: '#27272A', alignItems: 'center', justifyContent: 'center' },
+  colorRow: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginBottom: 20 },
+  colorDot: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  colorDotSel: { borderWidth: 3, borderColor: '#fff' },
+  modeChip: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 14, borderWidth: 1, borderColor: '#27272A', backgroundColor: '#18181B' },
+  modeTitle: { fontSize: 13, fontWeight: '700', color: '#71717A' },
+  modeDesc: { fontSize: 10, color: '#52525B', marginTop: 1 },
+  radio: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: '#3F3F46', alignItems: 'center', justifyContent: 'center' },
+  radioInner: { width: 8, height: 8, borderRadius: 4 },
+  goalChip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 14, borderWidth: 1, borderColor: '#27272A', backgroundColor: '#18181B' },
+  goalChipText: { fontSize: 13, fontWeight: '700', color: '#71717A' },
+  btns: { flexDirection: 'row', gap: 10 },
+  cancelBtn: { flex: 1, paddingVertical: 15, borderRadius: 16, borderWidth: 1, borderColor: '#27272A', backgroundColor: '#18181B', alignItems: 'center' },
+  cancelText: { fontSize: 15, fontWeight: '600', color: '#71717A' },
+  saveBtn: { flex: 2, flexDirection: 'row', paddingVertical: 15, borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  saveText: { fontSize: 15, fontWeight: '800', color: '#fff' },
+});
+
+// ── PastDaysModal ─────────────────────────────────────────────────────────────
+const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+function PastDaysModal({
+  counter, visible, onClose, onToggle,
+}: {
+  counter: DayCounter;
+  visible: boolean;
+  onClose: () => void;
+  onToggle: (date: string) => void;
+}) {
+  // Gera os últimos 60 dias em ordem crescente
+  const days = Array.from({ length: 60 }, (_, i) =>
+    format(subDays(new Date(), 59 - i), 'yyyy-MM-dd')
+  );
+
+  // Primeiro dia do bloco para alinhar o grid com os dias da semana
+  const firstDayDow = new Date(days[0] + 'T12:00:00').getDay(); // 0=dom, 6=sáb
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+  const markedCount = days.filter((d) => counter.dailyStatus[d] === 'ADD').length;
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={pd.overlay}>
+        <View style={pd.sheet}>
+          <View style={pd.handle} />
+          <View style={pd.header}>
+            <View>
+              <Text style={pd.title}>Dias Anteriores</Text>
+              <Text style={pd.titleSub}>
+                {counter.emoji} {counter.name} · {markedCount} marcados
+              </Text>
+            </View>
+            <TouchableOpacity onPress={onClose} style={pd.closeBtn}>
+              <Ionicons name="close" size={20} color="#71717A" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={pd.hint}>
+            Toque em qualquer dia para marcar ou desmarcar. Alterações são salvas imediatamente.
+          </Text>
+
+          {/* Cabeçalho da semana */}
+          <View style={pd.weekHeader}>
+            {WEEKDAYS.map((d) => (
+              <Text key={d} style={pd.weekLabel}>{d}</Text>
+            ))}
+          </View>
+
+          {/* Grid */}
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={pd.grid}>
+              {/* Células vazias para alinhar */}
+              {Array.from({ length: firstDayDow }).map((_, i) => (
+                <View key={`empty-${i}`} style={pd.cellEmpty} />
+              ))}
+              {days.map((d) => {
+                const isAdd = counter.dailyStatus[d] === 'ADD';
+                const isToday = d === todayStr;
+                const isFuture = d > todayStr;
+                return (
+                  <TouchableOpacity
+                    key={d}
+                    style={[
+                      pd.cell,
+                      isAdd && { backgroundColor: counter.color },
+                      isToday && !isAdd && { borderColor: counter.color, borderWidth: 1.5, backgroundColor: counter.color + '15' },
+                      isFuture && pd.cellFuture,
+                    ]}
+                    onPress={() => !isFuture && onToggle(d)}
+                    activeOpacity={0.7}
+                    disabled={isFuture}
+                  >
+                    <Text style={[
+                      pd.cellText,
+                      isAdd && { color: '#000', fontWeight: '800' },
+                      isToday && !isAdd && { color: counter.color, fontWeight: '700' },
+                    ]}>
+                      {d.slice(8)}
+                    </Text>
+                    {isAdd && <Ionicons name="checkmark" size={8} color="#000" style={{ marginTop: -2 }} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </ScrollView>
+
+          {/* Legenda */}
+          <View style={pd.legend}>
+            <View style={pd.legendItem}>
+              <View style={[pd.legendDot, { backgroundColor: counter.color }]} />
+              <Text style={pd.legendText}>Marcado</Text>
+            </View>
+            <View style={pd.legendItem}>
+              <View style={[pd.legendDot, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: counter.color }]} />
+              <Text style={pd.legendText}>Hoje</Text>
+            </View>
+            <View style={pd.legendItem}>
+              <View style={[pd.legendDot, { backgroundColor: '#1E1E24' }]} />
+              <Text style={pd.legendText}>Não marcado</Text>
+            </View>
+          </View>
+
+          <TouchableOpacity style={[pd.doneBtn, { backgroundColor: counter.color }]} onPress={onClose}>
+            <Text style={pd.doneBtnText}>Concluído</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const pd = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: '#111113', borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: '#1E1E24', padding: 24, maxHeight: '90%' },
+  handle: { width: 40, height: 4, backgroundColor: '#27272A', borderRadius: 2, alignSelf: 'center', marginBottom: 18 },
+  header: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 },
+  title: { fontSize: 20, fontWeight: '800', color: '#FAFAFA' },
+  titleSub: { fontSize: 12, color: '#71717A', marginTop: 3 },
+  closeBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#18181B', borderWidth: 1, borderColor: '#27272A', alignItems: 'center', justifyContent: 'center' },
+  hint: { fontSize: 12, color: '#52525B', marginBottom: 14, lineHeight: 17 },
+  weekHeader: { flexDirection: 'row', marginBottom: 6 },
+  weekLabel: { flex: 1, textAlign: 'center', fontSize: 10, color: '#52525B', fontWeight: '700', textTransform: 'uppercase' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  cell: {
+    width: '12.5%', aspectRatio: 1,
+    alignItems: 'center', justifyContent: 'center',
+    borderRadius: 8, backgroundColor: '#1E1E24',
+    gap: 1,
+  },
+  cellEmpty: { width: '12.5%', aspectRatio: 1 },
+  cellFuture: { opacity: 0.2 },
+  cellText: { fontSize: 11, color: '#52525B', fontWeight: '500' },
+  legend: { flexDirection: 'row', justifyContent: 'center', gap: 24, marginTop: 16, marginBottom: 16 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendDot: { width: 12, height: 12, borderRadius: 6 },
+  legendText: { fontSize: 11, color: '#71717A', fontWeight: '500' },
+  doneBtn: { paddingVertical: 14, borderRadius: 16, alignItems: 'center' },
+  doneBtnText: { fontSize: 15, fontWeight: '800', color: '#fff' },
+});
+
+// ── CounterCard ───────────────────────────────────────────────────────────────
+function CounterCard({
+  counter, stats, onMark, onUndo, onReset, onDelete, onEdit, onPastDays,
+}: {
+  counter: DayCounter;
+  stats: ReturnType<typeof import('../../context/CounterContext').getDayCounterStatsStatic>;
+  onMark: () => void;
+  onUndo: () => void;
+  onReset: () => void;
+  onDelete: () => void;
+  onEdit: () => void;
+  onPastDays: () => void;
+}) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const { color, emoji, name, mode, goalDays } = counter;
+
+  const handleMark = () => {
+    if (stats.hasAddedToday) return;
+    Animated.sequence([
+      Animated.timing(scaleAnim, { toValue: 0.96, duration: 70, useNativeDriver: true }),
+      Animated.timing(scaleAnim, { toValue: 1.03, duration: 100, useNativeDriver: true }),
+      Animated.timing(scaleAnim, { toValue: 1, duration: 120, useNativeDriver: true }),
+    ]).start();
+    onMark();
+  };
+
+  const modeColor = mode === 'streak' ? '#10B981' : '#818CF8';
+  const hasGoal = goalDays !== null;
+  const pct = stats.percent;
+
+  return (
+    <Animated.View style={[s.card, { borderColor: stats.hasAddedToday ? color + '55' : '#27272A', transform: [{ scale: scaleAnim }] }]}>
+      <View style={[s.cardAccent, { backgroundColor: color }]} />
+      <View style={s.cardBody}>
+        {/* Topo */}
+        <View style={s.cardTop}>
+          <View style={s.cardTopLeft}>
+            <View style={[s.emojiWrap, { backgroundColor: color + '20' }]}>
+              <Text style={s.emojiText}>{emoji}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.cardName} numberOfLines={1}>{name}</Text>
+              <View style={[s.modePill, { backgroundColor: modeColor + '18' }]}>
+                <Text style={[s.modePillText, { color: modeColor }]}>
+                  {mode === 'streak' ? `🔥 Sequência · ${stats.streak}d` : '📊 Contagem'}
+                </Text>
+              </View>
+            </View>
+          </View>
+          <ProgressRing percent={pct} color={color} count={stats.count} />
+        </View>
+
+        {/* Progresso (só se tem meta) */}
+        {hasGoal && pct !== null ? (
+          <>
+            <View style={s.progressBg}>
+              <View style={[s.progressFill, { width: `${pct}%` as any, backgroundColor: color }]} />
+            </View>
+            <View style={s.progressRow}>
+              <Text style={[s.progressPct, { color }]}>{pct}%</Text>
+              <Text style={s.progressGoal}>de {goalDays} dias</Text>
+              {stats.hasAddedToday && <Text style={[s.doneLabel, { color }]}>✓ marcado hoje</Text>}
+            </View>
+          </>
+        ) : (
+          <View style={s.noGoalRow}>
+            <View style={[s.noGoalBadge, { borderColor: color + '33' }]}>
+              <Text style={[s.noGoalText, { color: color + 'AA' }]}>∞ Sem meta</Text>
+            </View>
+            {stats.hasAddedToday && <Text style={[s.doneLabel, { color }]}>✓ marcado hoje</Text>}
+          </View>
+        )}
+
+        {/* Linha principal: marcar + undo */}
+        <View style={s.actionsTop}>
+          <TouchableOpacity
+            style={[s.markBtn, stats.hasAddedToday ? s.markBtnDone : { backgroundColor: color + '20', borderColor: color }]}
+            onPress={handleMark}
+            disabled={stats.hasAddedToday}
+            activeOpacity={0.8}
+          >
+            <Ionicons name={stats.hasAddedToday ? 'checkmark-circle' : 'add-circle-outline'} size={18}
+              color={stats.hasAddedToday ? '#3F3F46' : color} />
+            <Text style={[s.markBtnText, { color: stats.hasAddedToday ? '#3F3F46' : color }]}>
+              {stats.hasAddedToday ? 'Marcado hoje' : 'Marcar hoje'}
+            </Text>
+          </TouchableOpacity>
+          {stats.canUndo && (
+            <TouchableOpacity style={[s.iconBtn, { borderColor: '#312E81', backgroundColor: '#1E1B4B' }]} onPress={onUndo}>
+              <Ionicons name="arrow-undo" size={16} color="#818CF8" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Linha secundária: ações */}
+        <View style={s.actionsBottom}>
+          <TouchableOpacity style={[s.actionChip, { borderColor: color + '33', backgroundColor: color + '10' }]} onPress={onPastDays}>
+            <Ionicons name="calendar-outline" size={14} color={color} />
+            <Text style={[s.actionChipText, { color }]}>Dias anteriores</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.actionChipGray} onPress={onEdit}>
+            <Ionicons name="pencil-outline" size={14} color="#A1A1AA" />
+            <Text style={s.actionChipGrayText}>Editar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.iconBtnSm} onPress={onReset}>
+            <Ionicons name="refresh-outline" size={14} color="#52525B" />
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.iconBtnSm, { borderColor: '#7F1D1D', backgroundColor: '#450A0A' }]} onPress={onDelete}>
+            <Ionicons name="trash-outline" size={14} color="#EF4444" />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Animated.View>
+  );
+}
+
+// ── Tela principal ────────────────────────────────────────────────────────────
+export default function HomeScreen() {
+  const {
+    dayCounters, addDayCounter, updateDayCounter, removeDayCounter,
+    incrementDayCounter, undoDayCounter, resetDayCounter, toggleDateOnCounter,
+    getDayCounterStats,
+  } = useCounter();
+
+  const [showConfetti, setShowConfetti] = useState(false);
+
+  // Modal estados
+  const [addVisible, setAddVisible] = useState(false);
+  const [editTarget, setEditTarget] = useState<DayCounter | null>(null);
+  const [pastDaysTarget, setPastDaysTarget] = useState<DayCounter | null>(null);
+
+  // Form criação
+  const [newName, setNewName] = useState('');
+  const [newEmoji, setNewEmoji] = useState('🎯');
+  const [newColor, setNewColor] = useState(COUNTER_COLORS[0]);
+  const [newMode, setNewMode] = useState<CountMode>('streak');
+  const [newGoal, setNewGoal] = useState<number | null>(30);
+
+  const markedToday = dayCounters.filter((c) => getDayCounterStats(c).hasAddedToday).length;
+  const total = dayCounters.length;
+
+  const handleMark = (counter: DayCounter) => {
+    const stats = getDayCounterStats(counter);
+    incrementDayCounter(counter.id);
+    const newCount = stats.count + 1;
+    if ([7, 14, 21, 30, 60, 100].includes(newCount) || newCount === (counter.goalDays ?? -1)) {
       setShowConfetti(true);
     }
   };
 
-  const confirmReset = () => {
-    Alert.alert('Reiniciar', 'Tem certeza que quer zerar a contagem?', [
+  const handleReset = (c: DayCounter) => {
+    Alert.alert('Zerar histórico?', `Apaga todos os dados de "${c.name}".`, [
       { text: 'Cancelar', style: 'cancel' },
-      { text: 'Zerar', style: 'destructive', onPress: resetAction },
+      { text: 'Zerar', style: 'destructive', onPress: () => resetDayCounter(c.id) },
     ]);
   };
 
-  const handleDateChange = (_: any, selectedDate?: Date) => {
-    setShowPicker(false);
-    if (selectedDate) setTargetDate(format(selectedDate, 'yyyy-MM-dd'));
+  const handleDelete = (c: DayCounter) => {
+    Alert.alert('Excluir contador?', `Remove "${c.name}" permanentemente.`, [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Excluir', style: 'destructive', onPress: () => removeDayCounter(c.id) },
+    ]);
   };
 
-  const daysLeft = targetDate
-    ? differenceInDays(startOfDay(new Date(targetDate)), startOfDay(new Date()))
-    : null;
+  const handleCreate = () => {
+    if (!newName.trim()) { Alert.alert('Nome obrigatório'); return; }
+    addDayCounter(newName.trim(), newEmoji, newColor, newMode, newGoal);
+    resetForm();
+  };
 
-  const phraseIndex = totalCount % PHRASES.length;
-
-  const percentComplete = Math.round(progress * 100);
+  const resetForm = () => {
+    setNewName(''); setNewEmoji('🎯'); setNewColor(COUNTER_COLORS[0]);
+    setNewMode('streak'); setNewGoal(30); setAddVisible(false);
+  };
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <Text style={styles.title}>Contador</Text>
+    <View style={s.screen}>
+      <ScrollView style={s.scroll} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
 
-      {/* Progress Ring */}
-      <View style={styles.ringContainer}>
-        <Svg width={RING_SIZE} height={RING_SIZE} style={styles.svg}>
-          {/* Background track */}
-          <Circle
-            cx={RING_SIZE / 2}
-            cy={RING_SIZE / 2}
-            r={RADIUS}
-            stroke="#1E1E24"
-            strokeWidth={STROKE_WIDTH}
-            fill="none"
+        {/* Header */}
+        <View style={s.header}>
+          <View>
+            <Text style={s.headerTitle}>Meus Contadores</Text>
+            <Text style={s.headerSub}>
+              {total === 0 ? 'Nenhum contador criado' : `${markedToday}/${total} marcados hoje`}
+            </Text>
+          </View>
+          <TouchableOpacity style={s.addBtn} onPress={() => setAddVisible(true)}>
+            <Ionicons name="add" size={24} color="#FAFAFA" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Barra global */}
+        {total > 0 && (
+          <View style={s.globalBanner}>
+            <View style={s.globalBg}>
+              <View style={[s.globalFill, { width: `${Math.round((markedToday / total) * 100)}%` as any }]} />
+            </View>
+            <Text style={s.globalText}>
+              {markedToday === total ? '🏆 Todos marcados hoje!'
+                : markedToday === 0 ? 'Nenhum marcado ainda hoje'
+                : `${total - markedToday} restante${total - markedToday > 1 ? 's' : ''} hoje`}
+            </Text>
+          </View>
+        )}
+
+        {/* Lista */}
+        {dayCounters.map((counter) => (
+          <CounterCard
+            key={counter.id}
+            counter={counter}
+            stats={getDayCounterStats(counter)}
+            onMark={() => handleMark(counter)}
+            onUndo={() => undoDayCounter(counter.id)}
+            onReset={() => handleReset(counter)}
+            onDelete={() => handleDelete(counter)}
+            onEdit={() => setEditTarget(counter)}
+            onPastDays={() => setPastDaysTarget(counter)}
           />
-          {/* Progress arc */}
-          <AnimatedCircle
-            cx={RING_SIZE / 2}
-            cy={RING_SIZE / 2}
-            r={RADIUS}
-            stroke="#10B981"
-            strokeWidth={STROKE_WIDTH}
-            fill="none"
-            strokeDasharray={CIRCUMFERENCE}
-            strokeDashoffset={strokeDashoffset}
-            strokeLinecap="round"
-            rotation="-90"
-            origin={`${RING_SIZE / 2}, ${RING_SIZE / 2}`}
-          />
-        </Svg>
+        ))}
 
-        {/* Center content */}
-        <Animated.View style={[styles.ringCenter, { transform: [{ scale: pulseAnim }] }]}>
-          <Text style={styles.countText}>{totalCount}</Text>
-          <Text style={styles.countLabel}>dias</Text>
-          <Text style={styles.percentText}>{percentComplete}% da meta</Text>
-        </Animated.View>
-      </View>
+        {dayCounters.length === 0 && (
+          <TouchableOpacity style={s.emptyCard} onPress={() => setAddVisible(true)} activeOpacity={0.8}>
+            <Ionicons name="add-circle-outline" size={40} color="#27272A" />
+            <Text style={s.emptyTitle}>Criar primeiro contador</Text>
+            <Text style={s.emptySub}>Adicione metas de dias consecutivos ou acumulados</Text>
+          </TouchableOpacity>
+        )}
+      </ScrollView>
 
-      {/* Motivational phrase */}
-      <Text style={styles.phrase}>"{PHRASES[phraseIndex]}"</Text>
-
-      {/* Goal selector */}
-      <View style={styles.goalSection}>
-        <Text style={styles.goalLabel}>Meta:</Text>
-        <View style={styles.goalRow}>
-          {GOAL_OPTIONS.map((g) => (
-            <TouchableOpacity
-              key={g}
-              style={[styles.goalChip, goalDays === g && styles.goalChipActive]}
-              onPress={() => setGoalDays(g)}
-            >
-              <Text style={[styles.goalChipText, goalDays === g && styles.goalChipTextActive]}>
-                {g}d
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
-      {/* Stats row */}
-      <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{currentStreak}</Text>
-          <Text style={styles.statLabel}>Sequência atual</Text>
-        </View>
-        <View style={[styles.statCard, styles.statCardMiddle]}>
-          <Text style={[styles.statValue, { color: '#818CF8' }]}>{goalDays}</Text>
-          <Text style={styles.statLabel}>Meta (dias)</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: '#F59E0B' }]}>{personalRecord}</Text>
-          <Text style={styles.statLabel}>Recorde</Text>
-        </View>
-      </View>
-
-      {/* Event countdown chip */}
-      {targetDate && daysLeft !== null && daysLeft >= 0 && (
-        <TouchableOpacity style={styles.eventChip} onPress={() => setTargetDate(null)}>
-          <Text style={styles.eventChipText}>
-            🎯 {daysLeft === 0 ? 'É hoje!' : `Faltam ${daysLeft} dias para o evento`}
-          </Text>
-        </TouchableOpacity>
-      )}
-      {!targetDate && (
-        <TouchableOpacity style={styles.eventChipEmpty} onPress={() => setShowPicker(true)}>
-          <Text style={styles.eventChipEmptyText}>+ Definir data de evento</Text>
-        </TouchableOpacity>
+      {showConfetti && (
+        <ConfettiCannon count={200} origin={{ x: 200, y: 0 }} autoStart fadeOut fallSpeed={3000}
+          onAnimationEnd={() => setShowConfetti(false)} />
       )}
 
-      {showPicker && (
-        <DateTimePicker
-          value={targetDate ? new Date(targetDate) : new Date()}
-          mode="date"
-          display="default"
-          onChange={handleDateChange}
-          minimumDate={new Date()}
-          themeVariant="dark"
+      {/* ── Modal: Criar contador ── */}
+      <Modal visible={addVisible} transparent animationType="slide" onRequestClose={resetForm}>
+        <View style={ms.overlay}>
+          <ScrollView style={ms.sheet} contentContainerStyle={ms.sheetContent} showsVerticalScrollIndicator={false}>
+            <View style={ms.handle} />
+            <View style={ms.sheetHeader}>
+              <Text style={ms.sheetTitle}>Novo Contador</Text>
+              <TouchableOpacity onPress={resetForm}>
+                <Ionicons name="close" size={22} color="#71717A" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Preview */}
+            <View style={[ms.preview, { borderColor: newColor + '55' }]}>
+              <View style={[ms.previewEmoji, { backgroundColor: newColor + '20' }]}>
+                <Text style={{ fontSize: 24 }}>{newEmoji}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[ms.previewName, { color: newColor }]} numberOfLines={1}>
+                  {newName || 'Nome do contador'}
+                </Text>
+                <Text style={ms.previewMeta}>
+                  {newMode === 'streak' ? '🔥 Sequência' : '📊 Contagem'} · {newGoal !== null ? `Meta ${newGoal}d` : 'Sem meta'}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={ms.label}>Nome</Text>
+            <TextInput
+              style={ms.input}
+              placeholder="Ex: Sem redes sociais, Leitura..."
+              placeholderTextColor="#3F3F46"
+              value={newName}
+              onChangeText={setNewName}
+              returnKeyType="done"
+            />
+
+            <Text style={ms.label}>Emoji</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}
+              contentContainerStyle={{ gap: 8 }}>
+              {COUNTER_EMOJIS.map((e) => (
+                <TouchableOpacity key={e}
+                  style={[ms.chip, newEmoji === e && { borderColor: newColor, backgroundColor: newColor + '20' }]}
+                  onPress={() => setNewEmoji(e)}>
+                  <Text style={{ fontSize: 22 }}>{e}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={ms.label}>Cor</Text>
+            <View style={ms.colorRow}>
+              {COUNTER_COLORS.map((clr) => (
+                <TouchableOpacity key={clr}
+                  style={[ms.colorDot, { backgroundColor: clr }, newColor === clr && ms.colorDotSel]}
+                  onPress={() => setNewColor(clr)}>
+                  {newColor === clr && <Ionicons name="checkmark" size={14} color="#fff" />}
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={ms.label}>Modo</Text>
+            <View style={{ gap: 8, marginBottom: 20 }}>
+              {([
+                { m: 'streak' as CountMode, e: '🔥', t: 'Sequência', d: 'Dias consecutivos — perde um, volta a zero', ac: '#042F2E', bc: '#10B981' },
+                { m: 'simple' as CountMode, e: '📊', t: 'Contagem', d: 'Acumula todos os dias marcados, sem penalidade', ac: '#1E1B4B', bc: '#818CF8' },
+              ]).map((opt) => (
+                <TouchableOpacity key={opt.m}
+                  style={[ms.modeChip, newMode === opt.m && { borderColor: opt.bc, backgroundColor: opt.ac }]}
+                  onPress={() => setNewMode(opt.m)} activeOpacity={0.8}>
+                  <Text style={{ fontSize: 18 }}>{opt.e}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[ms.modeTitle, newMode === opt.m && { color: opt.bc }]}>{opt.t}</Text>
+                    <Text style={ms.modeDesc}>{opt.d}</Text>
+                  </View>
+                  <View style={[ms.radio, newMode === opt.m && { borderColor: opt.bc }]}>
+                    {newMode === opt.m && <View style={[ms.radioInner, { backgroundColor: opt.bc }]} />}
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={ms.label}>Meta de dias</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 28 }}
+              contentContainerStyle={{ gap: 8 }}>
+              {GOAL_OPTIONS.map((g) => (
+                <TouchableOpacity key={String(g)}
+                  style={[ms.goalChip, newGoal === g && { backgroundColor: newColor + '22', borderColor: newColor }]}
+                  onPress={() => setNewGoal(g)}>
+                  <Text style={[ms.goalChipText, newGoal === g && { color: newColor }]}>
+                    {g === null ? 'Sem meta' : `${g}d`}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <View style={ms.btns}>
+              <TouchableOpacity style={ms.cancelBtn} onPress={resetForm}>
+                <Text style={ms.cancelText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[ms.saveBtn, { backgroundColor: newColor }]} onPress={handleCreate}>
+                <Ionicons name="add-circle" size={18} color="#fff" />
+                <Text style={ms.saveText}>Criar Contador</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* ── Modal: Editar contador ── */}
+      {editTarget && (
+        <EditModal
+          counter={editTarget}
+          visible={!!editTarget}
+          onClose={() => setEditTarget(null)}
+          onSave={(updates) => updateDayCounter(editTarget.id, updates)}
         />
       )}
 
-      {/* Action buttons */}
-      <View style={styles.buttonRow}>
-        <TouchableOpacity style={[styles.btn, styles.btnReset]} onPress={confirmReset} activeOpacity={0.8}>
-          <Text style={styles.btnResetText}>✕</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.btn, styles.btnAdd, hasAddedToday && styles.btnDisabled]}
-          onPress={handleAdd}
-          disabled={hasAddedToday}
-          activeOpacity={0.8}
-        >
-          <Text style={[styles.btnAddText, hasAddedToday && styles.btnAddTextDisabled]}>+</Text>
-        </TouchableOpacity>
-      </View>
-
-      {hasAddedToday && (
-        <Text style={styles.feedbackText}>✓ Marcado hoje! Continue amanhã 🎉</Text>
-      )}
-
-      {/* Undo */}
-      <View style={styles.undoWrap}>
-        <TouchableOpacity
-          style={[styles.undoBtn, !canUndo && styles.undoBtnDisabled]}
-          onPress={undoAction}
-          disabled={!canUndo}
-        >
-          <Text style={[styles.undoBtnText, !canUndo && { color: '#3F3F46' }]}>
-            Desfazer última ação
-          </Text>
-        </TouchableOpacity>
-      </View>
-      
-      {showConfetti && (
-        <ConfettiCannon
-          count={200}
-          origin={{ x: 200, y: 0 }}
-          autoStart={true}
-          fadeOut={true}
-          fallSpeed={3000}
-          onAnimationEnd={() => setShowConfetti(false)}
+      {/* ── Modal: Dias anteriores ── */}
+      {pastDaysTarget && (
+        <PastDaysModal
+          counter={dayCounters.find((c) => c.id === pastDaysTarget.id) ?? pastDaysTarget}
+          visible={!!pastDaysTarget}
+          onClose={() => setPastDaysTarget(null)}
+          onToggle={(date) => toggleDateOnCounter(pastDaysTarget.id, date)}
         />
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#09090B',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 60,
-  },
-  title: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#FAFAFA',
-    alignSelf: 'flex-start',
-    marginBottom: 24,
-    letterSpacing: 0.4,
-  },
-  ringContainer: {
-    width: RING_SIZE,
-    height: RING_SIZE,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
-  },
-  svg: {
-    position: 'absolute',
-  },
-  ringCenter: {
-    alignItems: 'center',
-  },
-  countText: {
-    fontSize: 80,
-    fontWeight: '900',
-    color: '#FAFAFA',
-    lineHeight: 84,
-    fontVariant: ['tabular-nums'],
-  },
-  countLabel: {
-    fontSize: 15,
-    color: '#71717A',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 2,
-    marginBottom: 2,
-  },
-  percentText: {
-    fontSize: 13,
-    color: '#10B981',
-    fontWeight: '600',
-  },
-  phrase: {
-    fontSize: 13,
-    color: '#52525B',
-    fontStyle: 'italic',
-    textAlign: 'center',
-    marginBottom: 20,
-    paddingHorizontal: 8,
-    lineHeight: 18,
-  },
-  goalSection: {
-    width: '100%',
-    marginBottom: 16,
-  },
-  goalLabel: {
-    fontSize: 12,
-    color: '#71717A',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-  goalRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  goalChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
-    backgroundColor: '#18181B',
-    borderWidth: 1,
-    borderColor: '#27272A',
-  },
-  goalChipActive: {
-    backgroundColor: '#042F2E',
-    borderColor: '#10B981',
-  },
-  goalChipText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#71717A',
-  },
-  goalChipTextActive: {
-    color: '#10B981',
-  },
-  statsRow: {
-    flexDirection: 'row',
-    width: '100%',
-    gap: 10,
-    marginBottom: 16,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#18181B',
-    borderRadius: 16,
-    paddingVertical: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#27272A',
-  },
-  statCardMiddle: {
-    borderColor: '#312E81',
-    backgroundColor: '#1E1B4B',
-  },
-  statValue: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#10B981',
-    fontVariant: ['tabular-nums'],
-  },
-  statLabel: {
-    fontSize: 10,
-    color: '#71717A',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginTop: 2,
-    textAlign: 'center',
-  },
-  eventChip: {
-    backgroundColor: '#042F2E',
-    borderWidth: 1,
-    borderColor: '#065F46',
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 20,
-    marginBottom: 16,
-  },
-  eventChipText: {
-    color: '#34D399',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  eventChipEmpty: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 20,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#27272A',
-    borderStyle: 'dashed',
-  },
-  eventChipEmptyText: {
-    color: '#52525B',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-    maxWidth: 300,
-    marginBottom: 14,
-  },
-  btn: {
-    width: 86,
-    height: 86,
-    borderRadius: 43,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-  },
-  btnAdd: {
-    backgroundColor: '#042F2E',
-    borderColor: '#065F46',
-  },
-  btnReset: {
-    backgroundColor: '#450A0A',
-    borderColor: '#7F1D1D',
-  },
-  btnDisabled: {
-    backgroundColor: '#18181B',
-    borderColor: '#27272A',
-  },
-  btnAddText: {
-    fontSize: 40,
-    fontWeight: '600',
-    color: '#10B981',
-  },
-  btnAddTextDisabled: {
-    color: '#3F3F46',
-  },
-  btnResetText: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#EF4444',
-  },
-  feedbackText: {
-    fontSize: 14,
-    color: '#34D399',
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  undoWrap: {
-    width: '100%',
-    marginTop: 'auto',
-    paddingBottom: 16,
-  },
-  undoBtn: {
-    borderWidth: 1,
-    borderColor: '#27272A',
-    backgroundColor: '#18181B',
-    paddingVertical: 15,
-    borderRadius: 16,
-    alignItems: 'center',
-  },
-  undoBtnDisabled: {
-    backgroundColor: '#09090B',
-    borderColor: '#18181B',
-  },
-  undoBtnText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FAFAFA',
-  },
+// ── Styles ────────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: '#09090B' },
+  scroll: { flex: 1 },
+  content: { paddingHorizontal: 20, paddingTop: 60, paddingBottom: 48 },
+
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  headerTitle: { fontSize: 24, fontWeight: '800', color: '#FAFAFA', letterSpacing: 0.3 },
+  headerSub: { fontSize: 12, color: '#52525B', marginTop: 2, fontWeight: '500' },
+  addBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: '#18181B', borderWidth: 1, borderColor: '#27272A', alignItems: 'center', justifyContent: 'center' },
+
+  globalBanner: { marginBottom: 16 },
+  globalBg: { height: 3, backgroundColor: '#18181B', borderRadius: 2, overflow: 'hidden', marginBottom: 6 },
+  globalFill: { height: '100%', backgroundColor: '#10B981', borderRadius: 2 },
+  globalText: { fontSize: 12, color: '#52525B', fontWeight: '500' },
+
+  card: { flexDirection: 'row', backgroundColor: '#111113', borderRadius: 20, borderWidth: 1, overflow: 'hidden', marginBottom: 12 },
+  cardAccent: { width: 4 },
+  cardBody: { flex: 1, padding: 16 },
+  cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  cardTopLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, marginRight: 8 },
+  emojiWrap: { width: 44, height: 44, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  emojiText: { fontSize: 22 },
+  cardName: { fontSize: 15, fontWeight: '700', color: '#FAFAFA', marginBottom: 4 },
+  modePill: { alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3 },
+  modePillText: { fontSize: 10, fontWeight: '700' },
+
+  progressBg: { height: 4, backgroundColor: '#1E1E24', borderRadius: 2, overflow: 'hidden', marginBottom: 5 },
+  progressFill: { height: '100%', borderRadius: 2 },
+  progressRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10 },
+  progressPct: { fontSize: 11, fontWeight: '700' },
+  progressGoal: { fontSize: 11, color: '#52525B', fontWeight: '500' },
+  doneLabel: { marginLeft: 'auto', fontSize: 11, fontWeight: '700' },
+
+  noGoalRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  noGoalBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
+  noGoalText: { fontSize: 11, fontWeight: '600' },
+
+  actionsTop: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 8 },
+  markBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 12, borderWidth: 1 },
+  markBtnDone: { backgroundColor: '#18181B', borderColor: '#27272A' },
+  markBtnText: { fontSize: 13, fontWeight: '700' },
+  iconBtn: { width: 38, height: 38, borderRadius: 10, backgroundColor: '#1A1A1E', borderWidth: 1, borderColor: '#27272A', alignItems: 'center', justifyContent: 'center' },
+
+  actionsBottom: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  actionChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, borderWidth: 1, flex: 1 },
+  actionChipText: { fontSize: 11, fontWeight: '700' },
+  actionChipGray: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, borderWidth: 1, borderColor: '#27272A', backgroundColor: '#18181B' },
+  actionChipGrayText: { fontSize: 11, fontWeight: '700', color: '#A1A1AA' },
+  iconBtnSm: { width: 34, height: 34, borderRadius: 9, backgroundColor: '#1A1A1E', borderWidth: 1, borderColor: '#27272A', alignItems: 'center', justifyContent: 'center' },
+
+  emptyCard: { alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#111113', borderRadius: 20, borderWidth: 1, borderColor: '#1E1E24', borderStyle: 'dashed', paddingVertical: 40 },
+  emptyTitle: { fontSize: 15, fontWeight: '700', color: '#3F3F46' },
+  emptySub: { fontSize: 12, color: '#27272A', fontWeight: '500', textAlign: 'center', paddingHorizontal: 24 },
 });

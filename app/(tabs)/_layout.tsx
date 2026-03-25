@@ -6,9 +6,11 @@ import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useCounter } from '@/context/CounterContext';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
+  const { countdownTabEnabled } = useCounter();
 
   return (
     <Tabs
@@ -28,6 +30,7 @@ export default function TabLayout() {
         name="countdown"
         options={{
           title: 'Regressiva',
+          href: countdownTabEnabled ? undefined : null,
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="hourglass" color={color} />,
         }}
       />
