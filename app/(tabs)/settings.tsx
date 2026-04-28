@@ -7,8 +7,13 @@ import {
   StyleSheet, View, Text, TouchableOpacity,
   Switch, ScrollView, Alert,
 } from 'react-native';
-import { useCounter, computeSimpleCount, computePersonalRecord } from '../../context/CounterContext';
+import { useCounter } from '../../context/CounterContext';
+import { ACHIEVEMENTS } from '../../utils/achievements';
+import { getDayCounterStatsStatic, calculateLevel, calculateXpProgress, LEVEL_THRESHOLDS } from '../../utils/counterUtils';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
+import * as Sharing from 'expo-sharing';
+import * as Haptics from 'expo-haptics';
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
@@ -23,20 +28,81 @@ export default function SettingsScreen() {
     setCountdownTabEnabled,
     removeDayCounter,
     getDayCounterStats,
+    exportData,
+    importData,
+    globalXp = 0,
   } = useCounter();
 
   const [showHourPicker, setShowHourPicker] = useState(false);
 
-  // Stats agregadas
-  const totalDaysMarked = dayCounters.reduce((s, c) => s + computeSimpleCount(c.dailyStatus), 0);
-  const bestRecord = dayCounters.reduce((m, c) => Math.max(m, computePersonalRecord(c.dailyStatus)), 0);
-  const today = new Date().toISOString().slice(0, 10);
-  const markedToday = dayCounters.filter((c) => c.dailyStatus[today] === 'ADD').length;
+  // Stats agregadas (usando utilitários centralizados)
+  const allStats = dayCounters.map(c => getDayCounterStatsStatic(c));
+  const totalDaysMarked = allStats.reduce((s, st) => s + st.totalAdds, 0);
+  const bestRecord = allStats.reduce((m, st) => Math.max(m, st.personalRecord), 0);
+  const markedToday = allStats.filter(st => st.hasAddedToday).length;
+  const currentMaxStreak = allStats.reduce((m, st) => Math.max(m, st.streak), 0);
+
+  const aggregate = {
+    count: allStats.reduce((s, st) => s + st.count, 0),
+    streak: currentMaxStreak,
+    totalAdds: totalDaysMarked,
+    personalRecord: bestRecord
+  };
+
+  const userLevel = calculateLevel(globalXp);
+  const xpProgress = calculateXpProgress(globalXp, userLevel);
+  const nextLevelXp = userLevel < LEVEL_THRESHOLDS.length ? LEVEL_THRESHOLDS[userLevel] : LEVEL_THRESHOLDS[LEVEL_THRESHOLDS.length - 1];
+  const currentLevelXp = userLevel > 1 ? LEVEL_THRESHOLDS[userLevel - 1] : 0;
 
   const formatHour = (h: number) => {
     const p = h < 12 ? 'AM' : 'PM';
     const d = h === 0 ? 12 : h > 12 ? h - 12 : h;
     return `${d}:00 ${p}`;
+  };
+
+  const handleExport = async () => {
+    try {
+      const data = await exportData();
+      await Clipboard.setStringAsync(data);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      
+      Alert.alert(
+        'Dados Copiados', 
+        'O código de backup foi copiado para sua área de transferência. Deseja também salvar como arquivo?',
+        [
+          { text: 'Apenas Copiar', style: 'cancel' },
+          { 
+            text: 'Salvar Arquivo', 
+            onPress: async () => {
+              // Em Expo, Sharing.shareAsync com texto bruto funciona em alguns apps.
+              // Melhor apenas reafirmar que foi copiado ou usar Share nativo.
+              Alert.alert('Backup', data);
+            }
+          }
+        ]
+      );
+    } catch (e) {
+      Alert.alert('Erro', 'Falha ao exportar dados.');
+    }
+  };
+
+  const handleImport = async () => {
+    Alert.prompt(
+      'Importar Dados',
+      'Cole o código JSON exportado abaixo. ATENÇÃO: Isso substituirá todos os seus dados atuais.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { 
+          text: 'Importar', 
+          onPress: async (text?: string) => {
+            if (!text) return;
+            const ok = await importData(text);
+            if (ok) Alert.alert('Sucesso', 'Dados importados com sucesso!');
+            else Alert.alert('Erro', 'Código JSON inválido.');
+          }
+        }
+      ]
+    );
   };
 
   return (
@@ -68,6 +134,19 @@ export default function SettingsScreen() {
               <Text style={s.statLabel}>{st.label}</Text>
             </View>
           ))}
+        </View>
+        
+        <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#27272A' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+            <Text style={{ color: '#A1A1AA', fontSize: 12 }}>Nível {userLevel}</Text>
+            <Text style={{ color: '#71717A', fontSize: 11 }}>{globalXp.toLocaleString()} XP</Text>
+          </View>
+          <View style={{ height: 6, backgroundColor: '#1E1E24', borderRadius: 3, overflow: 'hidden' }}>
+            <View style={{ width: `${xpProgress}%`, height: '100%', backgroundColor: '#F59E0B', borderRadius: 3 }} />
+          </View>
+          <Text style={{ color: '#52525B', fontSize: 10, marginTop: 4 }}>
+            {nextLevelXp.toLocaleString()} XP para o próximo nível
+          </Text>
         </View>
       </View>
 
@@ -108,10 +187,10 @@ export default function SettingsScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={s.counterName}>{c.name}</Text>
                   <Text style={s.counterMeta}>
-                    {c.mode === 'streak' ? '🔥 Sequência' : '📊 Contagem'} · Meta {c.goalDays}d
+                    {c.mode === 'streak' ? '🔥 Sequência' : c.mode === 'simple' ? '📊 Contagem' : '⚡ Ambos'} · Meta {c.goalDays}d
                   </Text>
                 </View>
-                <Text style={[s.counterCount, { color: c.color }]}>{stats.count}</Text>
+                <Text style={[s.counterCount, { color: c.color }]}>{c.mode === 'both' ? stats.totalAdds : stats.count}</Text>
                 <TouchableOpacity
                   onPress={() =>
                     Alert.alert('Remover contador?', `Remover "${c.name}" permanentemente?`, [
@@ -184,6 +263,48 @@ export default function SettingsScreen() {
         <Text style={s.infoText}>
           Você recebe avisos ao atingir 7, 14, 21, 30, 60 e 100 dias em qualquer contador.
         </Text>
+      </View>
+
+      {/* ── Conquistas ── */}
+      <Text style={s.section}>🏆 Suas Medalhas</Text>
+      <Text style={s.desc}>Baseadas no seu progresso total em todos os contadores.</Text>
+      <View style={s.achievementsGrid}>
+        {ACHIEVEMENTS.map((ach) => {
+          const unlocked = ach.requirement(aggregate);
+          return (
+            <View key={ach.id} style={[s.achCard, !unlocked && { opacity: 0.4, filter: 'grayscale(1)' }]}>
+              <View style={[s.achIconWrap, { backgroundColor: ach.color + '20' }]}>
+                <Text style={{ fontSize: 24 }}>{unlocked ? ach.icon : '🔒'}</Text>
+              </View>
+              <Text style={s.achTitle} numberOfLines={1}>{ach.title}</Text>
+              <Text style={s.achDesc}>{ach.description}</Text>
+            </View>
+          );
+        })}
+      </View>
+
+      {/* ── Gerenciamento de Dados ── */}
+      <Text style={s.section}>💾 Backup e Sincronização</Text>
+      <View style={s.card}>
+        <TouchableOpacity style={s.dataBtn} onPress={handleExport}>
+          <Ionicons name="cloud-download-outline" size={20} color="#818CF8" />
+          <View style={{ flex: 1 }}>
+            <Text style={s.dataBtnTitle}>Exportar Dados</Text>
+            <Text style={s.dataBtnSub}>Gera um código para backup ou transferência</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color="#3F3F46" />
+        </TouchableOpacity>
+        
+        <View style={s.divider} />
+        
+        <TouchableOpacity style={s.dataBtn} onPress={handleImport}>
+          <Ionicons name="cloud-upload-outline" size={20} color="#F59E0B" />
+          <View style={{ flex: 1 }}>
+            <Text style={s.dataBtnTitle}>Importar Dados</Text>
+            <Text style={s.dataBtnSub}>Restaura dados a partir de um código exportado</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color="#3F3F46" />
+        </TouchableOpacity>
       </View>
 
       {/* ── Sugestões de melhoria ── */}
@@ -263,4 +384,16 @@ const s = StyleSheet.create({
   suggIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   suggTitle: { fontSize: 13, fontWeight: '700', marginBottom: 3 },
   suggDesc: { fontSize: 12, color: '#52525B', lineHeight: 17 },
+
+  // Achievements
+  achievementsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 28 },
+  achCard: { width: '48%', backgroundColor: '#111113', borderRadius: 20, padding: 16, borderWidth: 1, borderColor: '#27272A', alignItems: 'center' },
+  achIconWrap: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
+  achTitle: { fontSize: 13, fontWeight: '800', color: '#FAFAFA', marginBottom: 4, textAlign: 'center' },
+  achDesc: { fontSize: 10, color: '#71717A', textAlign: 'center', lineHeight: 14 },
+
+  // Data buttons
+  dataBtn: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 4 },
+  dataBtnTitle: { fontSize: 14, fontWeight: '700', color: '#FAFAFA' },
+  dataBtnSub: { fontSize: 11, color: '#52525B', marginTop: 1 },
 });

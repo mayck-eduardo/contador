@@ -11,147 +11,63 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { format, subDays } from 'date-fns';
+import {
+  ActionType,
+  CountMode,
+  FrequencyType,
+  DailyStatus,
+  DayCounter,
+  getTodayStr,
+  computeCount,
+  computeStreak,
+  computeSimpleCount,
+  getDayCounterStatsStatic,
+  XP_PER_COMPLETION,
+} from '../utils/counterUtils';
+import { getDayCounterStatsStatic as getStats } from '../utils/counterUtils';
 import {
   requestNotificationPermissions,
   scheduleDailyEncouragement,
   scheduleCheckinReminder,
   triggerMilestoneNotification,
   cancelAllNotifications,
+  scheduleCounterReminder,
+  cancelCounterReminder,
 } from '../services/NotificationService';
 import { WidgetService } from '../services/WidgetService';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-export type ActionType = 'ADD' | 'RESET';
-export type CountMode = 'streak' | 'simple';
-export type DailyStatus = Record<string, ActionType>;
+// ─── Re-exports para conveniência ───────────────────────────────────────────
+export { ActionType, CountMode, FrequencyType, DailyStatus, DayCounter, computeCount, computeStreak, computeSimpleCount };
 
-export interface LastAction {
-  type: ActionType;
-  date: string;
-  previousStatusOnDate: ActionType | null;
-}
-
-export interface DayCounter {
-  id: string;
-  name: string;
-  emoji: string;
-  color: string;
-  mode: CountMode;
-  startDate: string;
-  dailyStatus: DailyStatus;
-  goalDays: number | null; // null = sem meta
-  lastAction: LastAction | null;
-}
-
-// ─── Lógica de cálculo (pura, sem efeitos colaterais) ────────────────────────
-
-const getToday = () => format(new Date(), 'yyyy-MM-dd');
-const getYesterday = () => format(subDays(new Date(), 1), 'yyyy-MM-dd');
-
-/**
- * ⚠️ Usa new Date() e subDays para evitar parse UTC em fuso UTC-3.
- * 'new Date(dateString)' parsearia como UTC midnight → dia errado no Brasil.
- */
-export function computeStreak(status: DailyStatus): number {
-  const today = getToday();
-  const yesterday = getYesterday();
-
-  const startKey = status[today] === 'ADD' ? today : yesterday;
-  if (status[startKey] !== 'ADD') return 0;
-
-  let checkDate = new Date();
-  if (startKey === yesterday) checkDate = subDays(checkDate, 1);
-
-  let streak = 0;
-  while (true) {
-    const dateStr = format(checkDate, 'yyyy-MM-dd');
-    if (status[dateStr] === 'ADD') {
-      streak++;
-      checkDate = subDays(checkDate, 1);
-    } else {
-      break;
-    }
-  }
-  return streak;
-}
-
-export function computeSimpleCount(status: DailyStatus): number {
-  return Object.values(status).filter((v) => v === 'ADD').length;
-}
-
-export function computeCount(status: DailyStatus, mode: CountMode): number {
-  return mode === 'streak' ? computeStreak(status) : computeSimpleCount(status);
-}
-
-export function computePersonalRecord(status: DailyStatus): number {
-  const addDates = Object.keys(status).filter((d) => status[d] === 'ADD').sort();
-  if (addDates.length === 0) return 0;
-  let maxStreak = 1;
-  let tempStreak = 1;
-  for (let i = 1; i < addDates.length; i++) {
-    const prev = new Date(addDates[i - 1]);
-    const curr = new Date(addDates[i]);
-    const diffDays = Math.round((curr.getTime() - prev.getTime()) / 86400000);
-    if (diffDays === 1) {
-      tempStreak++;
-      if (tempStreak > maxStreak) maxStreak = tempStreak;
-    } else {
-      tempStreak = 1;
-    }
-  }
-  return maxStreak;
-}
-
-export function computeSuccessRate(status: DailyStatus): number {
-  const total = Object.keys(status).length;
-  if (total === 0) return 0;
-  return Math.round((computeSimpleCount(status) / total) * 100);
-}
-
-/** Stats completas de um DayCounter, calculadas ao vivo */
-export function getDayCounterStatsStatic(counter: DayCounter) {
-  const count = computeCount(counter.dailyStatus, counter.mode);
-  const streak = computeStreak(counter.dailyStatus);
-  const personalRecord = computePersonalRecord(counter.dailyStatus);
-  const successRate = computeSuccessRate(counter.dailyStatus);
-  // Se não tem meta, percent = null (sem barra de progresso)
-  const percent =
-    counter.goalDays !== null && counter.goalDays > 0
-      ? Math.min(Math.round((count / counter.goalDays) * 100), 100)
-      : null;
-  const hasAddedToday = counter.dailyStatus[getToday()] === 'ADD';
-  const totalAdds = computeSimpleCount(counter.dailyStatus);
-  const canUndo = counter.lastAction !== null && counter.lastAction.date === getToday();
-  return { count, streak, personalRecord, successRate, percent, hasAddedToday, totalAdds, canUndo };
-}
-
-// ─── Estado da aplicação ──────────────────────────────────────────────────────
+// ─── Tipos Locais ────────────────────────────────────────────────────────────
 export interface AppState {
   dayCounters: DayCounter[];
-  // Configurações app
   notificationsEnabled: boolean;
   notificationHour: number;
   countdownTabEnabled: boolean;
   countdownTargetDate: string | null;
+  globalXp: number;
+  unlockedAchievements: string[];
 }
 
 interface CounterContextType extends AppState {
   isLoading: boolean;
-  // Counter CRUD
-  addDayCounter: (name: string, emoji: string, color: string, mode: CountMode, goalDays: number | null) => void;
-  updateDayCounter: (id: string, updates: Partial<Pick<DayCounter, 'name' | 'emoji' | 'color' | 'mode' | 'goalDays'>>) => void;
+  addDayCounter: (name: string, emoji: string, color: string, mode: CountMode, goalDays: number | null, reminderEnabled?: boolean, reminderHour?: number | null, frequencyType?: FrequencyType, specificDays?: number[]) => void;
+  updateDayCounter: (id: string, updates: Partial<Pick<DayCounter, 'name' | 'emoji' | 'color' | 'mode' | 'goalDays' | 'reminderEnabled' | 'reminderHour' | 'frequencyType' | 'specificDays'>>) => void;
   removeDayCounter: (id: string) => void;
   incrementDayCounter: (id: string) => void;
   undoDayCounter: (id: string) => void;
   resetDayCounter: (id: string) => void;
   toggleDateOnCounter: (id: string, date: string) => void;
   getDayCounterStats: (counter: DayCounter) => ReturnType<typeof getDayCounterStatsStatic>;
-  // Settings
   setNotificationsEnabled: (v: boolean) => void;
   setNotificationHour: (h: number) => void;
   setCountdownTabEnabled: (v: boolean) => void;
   setCountdownTargetDate: (v: string | null) => void;
+  addXp: (amount: number, counterId?: string) => void;
+  unlockAchievement: (id: string) => void;
+  exportData: () => Promise<string>;
+  importData: (json: string) => Promise<boolean>;
 }
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -166,6 +82,8 @@ const DEFAULT_STATE: AppState = {
   notificationHour: 20,
   countdownTabEnabled: true,
   countdownTargetDate: null,
+  globalXp: 0,
+  unlockedAchievements: [],
 };
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -183,13 +101,11 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (raw) {
           parsed = JSON.parse(raw);
         } else {
-          // Migração das versões anteriores (v3, v2, v1)
           const legacyKeys = ['@contador_state_v3', '@contador_state_v2', '@contador_state'];
           for (const key of legacyKeys) {
             const legacyRaw = await AsyncStorage.getItem(key);
             if (legacyRaw) {
               const legacy = JSON.parse(legacyRaw);
-              // Converte o contador principal legado em um DayCounter
               const existing: DayCounter[] = legacy.dayCounters ?? [];
               const hasMainAsDayCounter = existing.some((c: DayCounter) => c.id === 'main-legacy');
 
@@ -200,7 +116,7 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
                   emoji: '⭐',
                   color: '#10B981',
                   mode: legacy.countMode ?? 'streak',
-                  startDate: Object.keys(legacy.dailyStatus).sort()[0] ?? getToday(),
+                  startDate: Object.keys(legacy.dailyStatus).sort()[0] ?? getTodayStr(),
                   dailyStatus: legacy.dailyStatus,
                   goalDays: legacy.goalDays ?? 14,
                   lastAction: null,
@@ -212,7 +128,6 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 dayCounters: existing,
                 notificationsEnabled: legacy.notificationsEnabled ?? true,
                 notificationHour: legacy.notificationHour ?? 20,
-                watchedApps: legacy.watchedApps ?? [],
                 countdownTabEnabled: legacy.countdownTabEnabled ?? true,
                 countdownTargetDate: legacy.countdownTargetDate ?? null,
               };
@@ -228,6 +143,8 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
             dayCounters: (parsed.dayCounters ?? []).map((c: DayCounter) => ({
               ...c,
               lastAction: c.lastAction ?? null,
+              reminderEnabled: c.reminderEnabled ?? false,
+              reminderHour: c.reminderHour ?? 20,
             })),
           }));
         }
@@ -244,7 +161,6 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     if (isLoading) return;
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state)).catch(console.error);
-    // Widget: mostra o primeiro contador
     const first = state.dayCounters[0];
     if (first) {
       const stats = getDayCounterStatsStatic(first);
@@ -252,7 +168,7 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [state, isLoading]);
 
-  // ── Notificações ──────────────────────────────────────────────────────────
+  // ── Notificações Globais ────────────────────────────────────────────────────
   useEffect(() => {
     if (isLoading) return;
     const setup = async () => {
@@ -267,25 +183,60 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setup();
   }, [state.notificationsEnabled, state.notificationHour, isLoading]);
 
+  // ── Notificações Individuais ────────────────────────────────────────────────
+  useEffect(() => {
+    if (isLoading) return;
+    const updateIndividualReminders = async () => {
+      for (const counter of state.dayCounters) {
+        if (state.notificationsEnabled && counter.reminderEnabled && typeof counter.reminderHour === 'number') {
+          await scheduleCounterReminder(
+            counter.id,
+            counter.name,
+            counter.emoji,
+            counter.reminderHour,
+            0
+          );
+        } else {
+          await cancelCounterReminder(counter.id);
+        }
+      }
+    };
+    updateIndividualReminders();
+  }, [state.dayCounters, state.notificationsEnabled, isLoading]);
+
   // ── Counter actions ────────────────────────────────────────────────────────
-  const addDayCounter = (name: string, emoji: string, color: string, mode: CountMode, goalDays: number | null) => {
+  const addDayCounter = (
+    name: string,
+    emoji: string,
+    color: string,
+    mode: CountMode,
+    goalDays: number | null,
+    reminderEnabled: boolean = false,
+    reminderHour: number | null = 20,
+    frequencyType: FrequencyType = 'daily',
+    specificDays?: number[]
+  ) => {
     const counter: DayCounter = {
       id: Date.now().toString(),
       name: name.trim() || 'Contador',
       emoji: emoji || '🎯',
       color,
       mode,
-      startDate: getToday(),
+      startDate: getTodayStr(),
       dailyStatus: {},
       goalDays,
       lastAction: null,
+      reminderEnabled,
+      reminderHour,
+      frequencyType,
+      specificDays,
     };
     setState((p) => ({ ...p, dayCounters: [...p.dayCounters, counter] }));
   };
 
   const updateDayCounter = (
     id: string,
-    updates: Partial<Pick<DayCounter, 'name' | 'emoji' | 'color' | 'mode' | 'goalDays'>>
+    updates: Partial<Pick<DayCounter, 'name' | 'emoji' | 'color' | 'mode' | 'goalDays' | 'reminderEnabled' | 'reminderHour' | 'frequencyType' | 'specificDays'>>
   ) =>
     setState((p) => ({
       ...p,
@@ -294,7 +245,6 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       ),
     }));
 
-  /** Alterna ADD em qualquer data (passada ou hoje). */
   const toggleDateOnCounter = (id: string, date: string) =>
     setState((p) => ({
       ...p,
@@ -314,27 +264,37 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setState((p) => ({ ...p, dayCounters: p.dayCounters.filter((c) => c.id !== id) }));
 
   const incrementDayCounter = (id: string) => {
-    const today = getToday();
-    setState((p) => ({
-      ...p,
-      dayCounters: p.dayCounters.map((c) => {
+    const today = getTodayStr();
+    setState((p) => {
+      const updatedCounters: DayCounter[] = p.dayCounters.map((c) => {
         if (c.id !== id || c.dailyStatus[today] === 'ADD') return c;
         const newStatus: DailyStatus = { ...c.dailyStatus, [today]: 'ADD' };
         const newCount = computeCount(newStatus, c.mode);
         if (MILESTONES.includes(newCount) && p.notificationsEnabled) {
           triggerMilestoneNotification(newCount);
         }
-        return {
+        const updated: DayCounter = {
           ...c,
           dailyStatus: newStatus,
-          lastAction: { type: 'ADD', date: today, previousStatusOnDate: c.dailyStatus[today] ?? null },
+          lastAction: { type: 'ADD', date: today, previousStatusOnDate: c.dailyStatus[today] ?? null as any },
         };
-      }),
-    }));
+        return updated;
+      });
+      
+      const counter = p.dayCounters.find(c => c.id === id);
+      if (counter && counter.dailyStatus[today] !== 'ADD') {
+        return {
+          ...p,
+          dayCounters: updatedCounters,
+          globalXp: (p.globalXp || 0) + XP_PER_COMPLETION,
+        };
+      }
+      return { ...p, dayCounters: updatedCounters };
+    });
   };
 
   const undoDayCounter = (id: string) => {
-    const today = getToday();
+    const today = getTodayStr();
     setState((p) => ({
       ...p,
       dayCounters: p.dayCounters.map((c) => {
@@ -362,11 +322,48 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const getDayCounterStats = (counter: DayCounter) => getDayCounterStatsStatic(counter);
 
+  // ── Data Export/Import ─────────────────────────────────────────────────────
+  const exportData = async () => {
+    return JSON.stringify(state);
+  };
+
+  const importData = async (json: string) => {
+    try {
+      const parsed = JSON.parse(json);
+      if (parsed.dayCounters) {
+        setState(parsed);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error('[CounterContext] Falha ao importar:', e);
+      return false;
+    }
+  };
+
   // ── Settings ───────────────────────────────────────────────────────────────
   const setNotificationsEnabled = (v: boolean) => setState((p) => ({ ...p, notificationsEnabled: v }));
   const setNotificationHour = (h: number) => setState((p) => ({ ...p, notificationHour: h }));
   const setCountdownTabEnabled = (v: boolean) => setState((p) => ({ ...p, countdownTabEnabled: v }));
   const setCountdownTargetDate = (v: string | null) => setState((p) => ({ ...p, countdownTargetDate: v }));
+
+  // ── XP System ───────────────────────────────────────────────────────────────
+  const addXp = (amount: number, _counterId?: string) => {
+    setState((p) => ({
+      ...p,
+      globalXp: (p.globalXp || 0) + amount,
+    }));
+  };
+
+  const unlockAchievement = (id: string) => {
+    setState((p) => {
+      if (p.unlockedAchievements?.includes(id)) return p;
+      return {
+        ...p,
+        unlockedAchievements: [...(p.unlockedAchievements || []), id],
+      };
+    });
+  };
 
   return (
     <CounterContext.Provider
@@ -385,6 +382,10 @@ export const CounterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setNotificationHour,
         setCountdownTabEnabled,
         setCountdownTargetDate,
+        addXp,
+        unlockAchievement,
+        exportData,
+        importData,
       }}
     >
       {children}

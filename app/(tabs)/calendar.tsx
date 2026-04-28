@@ -13,9 +13,20 @@ import {
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import {
   useCounter, DayCounter,
-  computeStreak, computeSimpleCount, computePersonalRecord, computeSuccessRate,
 } from '../../context/CounterContext';
-import { format, subDays } from 'date-fns';
+import { 
+  computeStreak, computeSimpleCount, computePersonalRecord, computeSuccessRate, 
+  getDayCounterStatsStatic, computeWeeklySuccessRate, computeMonthlySuccessRate
+} from '../../utils/counterUtils';
+import Animated, { 
+  FadeInDown, 
+  FadeOutUp, 
+  LinearTransition, 
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming
+} from 'react-native-reanimated';
+import { format, subDays, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 
 // ── Locale ────────────────────────────────────────────────────────────────────
@@ -112,7 +123,7 @@ function DayDetailModal({
                     <View style={{ flex: 1 }}>
                       <Text style={dd.counterName}>{c.name}</Text>
                       <Text style={[dd.counterMode, { color: c.color + 'BB' }]}>
-                        {c.mode === 'streak' ? '🔥 Sequência' : '📊 Contagem'}
+                        {c.mode === 'streak' ? '🔥 Sequência' : c.mode === 'simple' ? '📊 Contagem' : '⚡ Ambos'}
                       </Text>
                     </View>
                     <View style={[dd.checkBadge, { backgroundColor: c.color + '22', borderColor: c.color + '55' }]}>
@@ -136,7 +147,7 @@ function DayDetailModal({
                     <View style={{ flex: 1 }}>
                       <Text style={dd.counterName}>{c.name}</Text>
                       <Text style={[dd.counterMode, { color: '#EF4444BB' }]}>
-                        {c.mode === 'streak' ? '🔥 Sequência' : '📊 Contagem'}
+                        {c.mode === 'streak' ? '🔥 Sequência' : c.mode === 'simple' ? '📊 Contagem' : '⚡ Ambos'}
                       </Text>
                     </View>
                     <View style={dd.resetBadge}>
@@ -160,7 +171,7 @@ function DayDetailModal({
                     <View style={{ flex: 1 }}>
                       <Text style={[dd.counterName, { color: '#52525B' }]}>{c.name}</Text>
                       <Text style={[dd.counterMode, { color: '#3F3F46' }]}>
-                        {c.mode === 'streak' ? '🔥 Sequência' : '📊 Contagem'}
+                        {c.mode === 'streak' ? '🔥 Sequência' : c.mode === 'simple' ? '📊 Contagem' : '⚡ Ambos'}
                       </Text>
                     </View>
                     <Text style={dd.noRegText}>Não marcado</Text>
@@ -217,19 +228,18 @@ function CounterHistoryCard({ counter }: { counter: DayCounter }) {
   const [expanded, setExpanded] = useState(false);
   const { color, emoji, name, mode, goalDays, dailyStatus } = counter;
 
-  const streak = useMemo(() => computeStreak(dailyStatus), [dailyStatus]);
-  const totalAdds = useMemo(() => computeSimpleCount(dailyStatus), [dailyStatus]);
-  const personalRecord = useMemo(() => computePersonalRecord(dailyStatus), [dailyStatus]);
-  const successRate = useMemo(() => computeSuccessRate(dailyStatus), [dailyStatus]);
-  const count = mode === 'streak' ? streak : totalAdds;
-  const percent = goalDays !== null && goalDays > 0
-    ? Math.min(Math.round((count / goalDays) * 100), 100)
-    : null;
-  const hasAddedToday = dailyStatus[format(new Date(), 'yyyy-MM-dd')] === 'ADD';
+  const stats = useMemo(() => getDayCounterStatsStatic(counter), [counter.dailyStatus, counter.mode]);
+  const { streak, totalAdds, personalRecord, successRate, count, percent, hasAddedToday } = stats;
+  const weeklySuccessRate = useMemo(() => computeWeeklySuccessRate(dailyStatus), [dailyStatus]);
+  const monthlySuccessRate = useMemo(() => computeMonthlySuccessRate(dailyStatus), [dailyStatus]);
   const week = lastNDays(7);
 
+  const containerStyle = useAnimatedStyle(() => ({
+    borderColor: withTiming(expanded ? color + '55' : '#27272A'),
+  }));
+
   return (
-    <View style={[hc.card, { borderColor: expanded ? color + '55' : '#27272A' }]}>
+    <Animated.View style={[hc.card, containerStyle]}>
       <TouchableOpacity style={hc.headerRow} onPress={() => setExpanded((e) => !e)} activeOpacity={0.85}>
         <View style={[hc.emojiBox, { backgroundColor: color + '20' }]}>
           <Text style={{ fontSize: 20 }}>{emoji}</Text>
@@ -244,7 +254,7 @@ function CounterHistoryCard({ counter }: { counter: DayCounter }) {
             )}
           </View>
           <Text style={[hc.modeLine, { color: color + 'BB' }]}>
-            {mode === 'streak' ? `🔥 ${streak}d de sequência` : `📊 ${totalAdds} dias acumulados`}
+            {mode === 'both' ? `⚡ ${streak}d seq | 📊 ${totalAdds} tot` : mode === 'streak' ? `🔥 ${streak}d de sequência` : `📊 ${totalAdds} dias acumulados`}
           </Text>
         </View>
         <View style={{ alignItems: 'flex-end', marginRight: 8 }}>
@@ -290,12 +300,15 @@ function CounterHistoryCard({ counter }: { counter: DayCounter }) {
             })}
           </View>
 
-          {/* Heatmap */}
-          <Text style={[hc.detailLabel, { marginTop: 14 }]}>Heatmap (28 dias)</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginVertical: 8 }}>
+          {/* Heatmap (28 dias) */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 8 }}>
+            <Text style={hc.detailLabel}>Intensidade (28 dias)</Text>
+            <Text style={[hc.detailLabel, { textTransform: 'none' }]}>{totalAdds} totais</Text>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
             {lastNDays(28).map((d) => (
               <View key={d} style={[
-                { width: 14, height: 14, borderRadius: 3, backgroundColor: '#1E1E24' },
+                { width: '6%', aspectRatio: 1, borderRadius: 3, backgroundColor: '#1E1E24' },
                 dailyStatus[d] === 'ADD' && { backgroundColor: color },
                 isToday(d) && dailyStatus[d] !== 'ADD' && { borderWidth: 1.5, borderColor: color, backgroundColor: 'transparent' },
               ]} />
@@ -308,6 +321,8 @@ function CounterHistoryCard({ counter }: { counter: DayCounter }) {
               { val: totalAdds, label: 'Marcados', c: color },
               { val: personalRecord, label: 'Recorde', c: '#F59E0B' },
               { val: `${successRate}%`, label: 'Sucesso', c: '#818CF8' },
+              { val: `${weeklySuccessRate}%`, label: 'Esta sem.', c: '#10B981' },
+              { val: `${monthlySuccessRate}%`, label: 'Este mês', c: '#06B6D4' },
             ].map((st) => (
               <View key={st.label} style={hc.statBox}>
                 <Text style={[hc.statVal, { color: st.c }]}>{st.val}</Text>
@@ -317,7 +332,7 @@ function CounterHistoryCard({ counter }: { counter: DayCounter }) {
           </View>
         </View>
       )}
-    </View>
+    </Animated.View>
   );
 }
 
@@ -352,6 +367,36 @@ export default function CalendarScreen() {
   const { dayCounters } = useCounter();
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+  // Dados para o Gráfico Semanal (Distribuição por dia da semana)
+  const weekData = useMemo(() => {
+    const distribution = [0, 0, 0, 0, 0, 0, 0]; // Dom-Sab
+    dayCounters.forEach(c => {
+      Object.keys(c.dailyStatus).forEach(d => {
+        if (c.dailyStatus[d] === 'ADD') {
+          const dow = new Date(d + 'T12:00:00').getDay();
+          distribution[dow]++;
+        }
+      });
+    });
+    return distribution;
+  }, [dayCounters]);
+
+  const maxVal = Math.max(...weekData, 1);
+
+  // Dados para o Heatmap Global (últimos 90 dias)
+  const heatmapDays = useMemo(() => lastNDays(90), []);
+  const globalActivity = useMemo(() => {
+    const activity: Record<string, number> = {};
+    dayCounters.forEach(c => {
+      Object.keys(c.dailyStatus).forEach(d => {
+        if (c.dailyStatus[d] === 'ADD') {
+          activity[d] = (activity[d] || 0) + 1;
+        }
+      });
+    });
+    return activity;
+  }, [dayCounters]);
 
   /**
    * markedDates com markingType='multi-dot':
@@ -409,14 +454,73 @@ export default function CalendarScreen() {
 
   return (
     <ScrollView style={st.container} contentContainerStyle={st.content} showsVerticalScrollIndicator={false}>
-      <Text style={st.title}>Histórico</Text>
+      {/* Gráfico Semanal */}
+      <Text style={st.sectionTitle}>📈 Distribuição Semanal</Text>
+      <View style={st.chartCard}>
+        <View style={st.chartRow}>
+          {weekData.map((val, i) => (
+             <View key={i} style={st.chartCol}>
+               <View style={st.chartBarTrack}>
+                 <View style={[st.chartBarFill, { height: `${(val / maxVal) * 100}%` as any }]} />
+               </View>
+               <Text style={st.chartLabel}>{['D','S','T','Q','Q','S','S'][i]}</Text>
+             </View>
+          ))}
+        </View>
+      </View>
 
-      {/* Dica */}
-      <View style={st.hintCard}>
-        <Ionicons name="finger-print-outline" size={15} color="#818CF8" />
-        <Text style={st.hintText}>
-          Toque em qualquer dia para ver quais contadores foram registrados naquele dia.
-        </Text>
+      <Text style={st.sectionTitle}>📅 Calendário Detalhado</Text>
+      <View style={st.calendarCard}>
+        <Calendar
+          markingType="multi-dot"
+          markedDates={markedDates}
+          onDayPress={(day: { dateString: string }) => {
+            setSelectedDate((prev) => (prev === day.dateString ? null : day.dateString));
+          }}
+          theme={{
+            backgroundColor: '#18181B',
+            calendarBackground: '#18181B',
+            textSectionTitleColor: '#52525B',
+            selectedDayBackgroundColor: '#27272A',
+            selectedDayTextColor: '#FAFAFA',
+            todayTextColor: '#10B981',
+            todayBackgroundColor: '#10B98122',
+            dayTextColor: '#FAFAFA',
+            textDisabledColor: '#3F3F46',
+            arrowColor: '#818CF8',
+            monthTextColor: '#FAFAFA',
+            textDayFontWeight: '600',
+            textMonthFontWeight: '800',
+            textDayHeaderFontWeight: '700',
+            textDayFontSize: 14,
+            textMonthFontSize: 16,
+            textDayHeaderFontSize: 12,
+          }}
+        />
+      </View>
+
+      {/* Heatmap Global */}
+      <Text style={st.sectionTitle}>🔥 Intensidade Global (90 dias)</Text>
+      <View style={st.heatmapContainer}>
+        <View style={st.heatmapGrid}>
+          {heatmapDays.map(d => {
+            const count = globalActivity[d] || 0;
+            const intensity = Math.min(count, 4); // máx 4 níveis de verde
+            const colors = ['#1E1E24', '#064E3B', '#065F46', '#059669', '#10B981'];
+            return (
+              <View key={d} style={[st.heatmapBox, { backgroundColor: colors[intensity] }]} />
+            );
+          })}
+        </View>
+        <View style={st.heatmapLegend}>
+          <Text style={st.heatmapLegendText}>Menos</Text>
+          <View style={[st.heatmapBox, { backgroundColor: '#1E1E24' }]} />
+          <View style={[st.heatmapBox, { backgroundColor: '#064E3B' }]} />
+          <View style={[st.heatmapBox, { backgroundColor: '#065F46' }]} />
+          <View style={[st.heatmapBox, { backgroundColor: '#059669' }]} />
+          <View style={[st.heatmapBox, { backgroundColor: '#10B981' }]} />
+          <Text style={st.heatmapLegendText}>Mais</Text>
+        </View>
       </View>
 
       {/* ── Calendário multi-dot ── */}
@@ -505,4 +609,17 @@ const st = StyleSheet.create({
   legendText: { fontSize: 12, color: '#A1A1AA', fontWeight: '600', maxWidth: 100 },
 
   sectionTitle: { fontSize: 16, fontWeight: '700', color: '#FAFAFA', marginBottom: 12 },
+
+  chartCard: { backgroundColor: '#18181B', borderRadius: 24, padding: 20, borderWidth: 1, borderColor: '#27272A', marginBottom: 24 },
+  chartRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', height: 100, paddingHorizontal: 10 },
+  chartCol: { alignItems: 'center', flex: 1, gap: 8 },
+  chartBarTrack: { width: 12, height: 70, backgroundColor: '#1E1E24', borderRadius: 6, overflow: 'hidden', justifyContent: 'flex-end' },
+  chartBarFill: { width: '100%', backgroundColor: '#10B981', borderRadius: 6 },
+  chartLabel: { fontSize: 10, color: '#52525B', fontWeight: '700' },
+
+  heatmapContainer: { backgroundColor: '#18181B', borderRadius: 24, padding: 16, borderWidth: 1, borderColor: '#27272A', marginBottom: 24 },
+  heatmapGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, justifyContent: 'center' },
+  heatmapBox: { width: 10, height: 10, borderRadius: 2 },
+  heatmapLegend: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginTop: 12 },
+  heatmapLegendText: { fontSize: 10, color: '#52525B', fontWeight: '600' },
 });

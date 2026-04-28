@@ -1,14 +1,21 @@
-/**
- * Tela Inicial — Dashboard com Edit Modal e Past Days Modal
- */
-
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, View, Text, TouchableOpacity, Alert,
-  ScrollView, Modal, TextInput, Animated,
+  ScrollView, Modal, TextInput, Switch, Share,
 } from 'react-native';
+import Animated, { 
+  FadeInDown, 
+  FadeOutUp, 
+  LinearTransition,
+  useSharedValue,
+  useAnimatedStyle,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import Svg, { Circle } from 'react-native-svg';
-import { useCounter, DayCounter, CountMode } from '../../context/CounterContext';
+import { useCounter, DayCounter, CountMode, FrequencyType } from '../../context/CounterContext';
+import { getDayCounterStatsStatic, ACHIEVEMENTS, getAchievementsForStats, calculateLevel, calculateXpProgress, XP_PER_COMPLETION } from '../../utils/counterUtils';
 import { Ionicons } from '@expo/vector-icons';
 import { format, subDays } from 'date-fns';
 import ConfettiCannon from 'react-native-confetti-cannon';
@@ -62,25 +69,37 @@ function EditModal({
   counter: DayCounter;
   visible: boolean;
   onClose: () => void;
-  onSave: (updates: Partial<Pick<DayCounter, 'name'|'emoji'|'color'|'mode'|'goalDays'>>) => void;
+  onSave: (updates: Partial<Pick<DayCounter, 'name'|'emoji'|'color'|'mode'|'goalDays'|'reminderEnabled'|'reminderHour'>>) => void;
 }) {
   const [name, setName] = useState(counter.name);
   const [emoji, setEmoji] = useState(counter.emoji);
   const [color, setColor] = useState(counter.color);
   const [mode, setMode] = useState<CountMode>(counter.mode);
   const [goal, setGoal] = useState<number | null>(counter.goalDays);
+  const [reminder, setReminder] = useState(counter.reminderEnabled ?? false);
+  const [remHour, setRemHour] = useState(counter.reminderHour ?? 20);
 
   // Sync when counter changes
   useEffect(() => {
     if (visible) {
       setName(counter.name); setEmoji(counter.emoji); setColor(counter.color);
       setMode(counter.mode); setGoal(counter.goalDays);
+      setReminder(counter.reminderEnabled ?? false);
+      setRemHour(counter.reminderHour ?? 20);
     }
   }, [visible, counter.id]);
 
   const handleSave = () => {
     if (!name.trim()) { Alert.alert('Nome obrigatório'); return; }
-    onSave({ name: name.trim(), emoji, color, mode, goalDays: goal });
+    onSave({ 
+      name: name.trim(), 
+      emoji, 
+      color, 
+      mode, 
+      goalDays: goal,
+      reminderEnabled: reminder,
+      reminderHour: remHour,
+    });
     onClose();
   };
 
@@ -104,7 +123,7 @@ function EditModal({
             <View style={{ flex: 1 }}>
               <Text style={[ms.previewName, { color }]} numberOfLines={1}>{name || 'Nome do contador'}</Text>
               <Text style={ms.previewMeta}>
-                {mode === 'streak' ? '🔥 Sequência' : '📊 Contagem'} · {goal !== null ? `Meta ${goal}d` : 'Sem meta'}
+                {mode === 'streak' ? '🔥 Sequência' : mode === 'simple' ? '📊 Contagem' : '⚡ Ambos'} · {goal !== null ? `Meta ${goal}d` : 'Sem meta'}
               </Text>
             </View>
           </View>
@@ -147,6 +166,7 @@ function EditModal({
             {([
               { m: 'streak' as CountMode, e: '🔥', t: 'Sequência', d: 'Dias consecutivos — perde um, volta a zero', ac: '#042F2E', bc: '#10B981' },
               { m: 'simple' as CountMode, e: '📊', t: 'Contagem', d: 'Acumula todos os dias marcados, sem penalidade', ac: '#1E1B4B', bc: '#818CF8' },
+              { m: 'both' as CountMode, e: '⚡', t: 'Ambos', d: 'Mostra sequência E contagem total junta', ac: '#1F1607', bc: '#F59E0B' },
             ]).map((opt) => (
               <TouchableOpacity key={opt.m}
                 style={[ms.modeChip, mode === opt.m && { borderColor: opt.bc, backgroundColor: opt.ac }]}
@@ -176,6 +196,32 @@ function EditModal({
               </TouchableOpacity>
             ))}
           </ScrollView>
+
+          <Text style={ms.label}>Lembrete Individual</Text>
+          <View style={ms.remCard}>
+            <View style={ms.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={ms.remTitle}>Ativar lembrete</Text>
+                <Text style={ms.remDesc}>Notificação diária para este contador</Text>
+              </View>
+              <Switch 
+                value={reminder} 
+                onValueChange={setReminder}
+                trackColor={{ false: '#27272A', true: color }}
+                thumbColor={reminder ? '#FAFAFA' : '#52525B'}
+              />
+            </View>
+            {reminder && (
+               <View style={ms.hourGrid}>
+                 {[8, 12, 18, 20, 22].map(h => (
+                   <TouchableOpacity key={h} onPress={() => setRemHour(h)}
+                     style={[ms.hourChip, remHour === h && { backgroundColor: color + '20', borderColor: color }]}>
+                     <Text style={[ms.hourChipText, remHour === h && { color }]}>{h}h</Text>
+                   </TouchableOpacity>
+                 ))}
+               </View>
+            )}
+          </View>
 
           <View style={ms.btns}>
             <TouchableOpacity style={ms.cancelBtn} onPress={onClose}>
@@ -221,6 +267,13 @@ const ms = StyleSheet.create({
   cancelText: { fontSize: 15, fontWeight: '600', color: '#71717A' },
   saveBtn: { flex: 2, flexDirection: 'row', paddingVertical: 15, borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: 8 },
   saveText: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  remCard: { backgroundColor: '#18181B', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#27272A', marginBottom: 24 },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  remTitle: { fontSize: 13, fontWeight: '700', color: '#FAFAFA' },
+  remDesc: { fontSize: 10, color: '#52525B', marginTop: 1 },
+  hourGrid: { flexDirection: 'row', gap: 6, marginTop: 14 },
+  hourChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: '#27272A', backgroundColor: '#141416' },
+  hourChipText: { fontSize: 11, fontWeight: '700', color: '#71717A' },
 });
 
 // ── PastDaysModal ─────────────────────────────────────────────────────────────
@@ -370,7 +423,7 @@ function CounterCard({
   counter, stats, onMark, onUndo, onReset, onDelete, onEdit, onPastDays,
 }: {
   counter: DayCounter;
-  stats: ReturnType<typeof import('../../context/CounterContext').getDayCounterStatsStatic>;
+  stats: ReturnType<typeof getDayCounterStatsStatic>;
   onMark: () => void;
   onUndo: () => void;
   onReset: () => void;
@@ -378,27 +431,54 @@ function CounterCard({
   onEdit: () => void;
   onPastDays: () => void;
 }) {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const scale = useSharedValue(1);
   const { color, emoji, name, mode, goalDays } = counter;
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
   const handleMark = () => {
     if (stats.hasAddedToday) return;
-    Animated.sequence([
-      Animated.timing(scaleAnim, { toValue: 0.96, duration: 70, useNativeDriver: true }),
-      Animated.timing(scaleAnim, { toValue: 1.03, duration: 100, useNativeDriver: true }),
-      Animated.timing(scaleAnim, { toValue: 1, duration: 120, useNativeDriver: true }),
-    ]).start();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    scale.value = withSequence(
+      withTiming(0.96, { duration: 70 }),
+      withTiming(1.03, { duration: 100 }),
+      withTiming(1, { duration: 120 })
+    );
     onMark();
   };
 
-  const modeColor = mode === 'streak' ? '#10B981' : '#818CF8';
+  const handleShare = async () => {
+    try {
+      const message = `🔥 Meu streak no contador "${emoji} ${name}" é de ${stats.streak} dias!\n📊 Total: ${stats.count} dias marcados.\n🎯 Meta: ${goalDays ? goalDays + ' dias' : 'Sem meta'}.\n\nFeito com o Contador App! 🚀`;
+      await Share.share({ message });
+    } catch (error) {
+      Alert.alert('Erro', 'Não foi possível compartilhar.');
+    }
+  };
+
+  const modeColor = mode === 'streak' ? '#10B981' : mode === 'simple' ? '#818CF8' : '#F59E0B';
   const hasGoal = goalDays !== null;
   const pct = stats.percent;
+  const displayCount = mode === 'both' ? stats.streakCount : stats.count;
+  const displayLabel = mode === 'both' 
+    ? `🔥 ${stats.streakCount}d | 📊 ${stats.totalAdds}` 
+    : mode === 'streak' 
+      ? `🔥 Sequência · ${stats.streakCount}d` 
+      : '📊 Contagem';
 
   return (
-    <Animated.View style={[s.card, { borderColor: stats.hasAddedToday ? color + '55' : '#27272A', transform: [{ scale: scaleAnim }] }]}>
-      <View style={[s.cardAccent, { backgroundColor: color }]} />
-      <View style={s.cardBody}>
+    <Animated.View 
+      entering={FadeInDown}
+      exiting={FadeOutUp}
+      layout={LinearTransition}
+    >
+      <Animated.View 
+        style={[s.card, { borderColor: stats.hasAddedToday ? color + '55' : '#27272A' }, animatedStyle]}
+      >
+        <View style={[s.cardAccent, { backgroundColor: color }]} />
+        <View style={s.cardBody}>
         {/* Topo */}
         <View style={s.cardTop}>
           <View style={s.cardTopLeft}>
@@ -409,12 +489,12 @@ function CounterCard({
               <Text style={s.cardName} numberOfLines={1}>{name}</Text>
               <View style={[s.modePill, { backgroundColor: modeColor + '18' }]}>
                 <Text style={[s.modePillText, { color: modeColor }]}>
-                  {mode === 'streak' ? `🔥 Sequência · ${stats.streak}d` : '📊 Contagem'}
+                  {displayLabel}
                 </Text>
               </View>
             </View>
           </View>
-          <ProgressRing percent={pct} color={color} count={stats.count} />
+          <ProgressRing percent={pct} color={color} count={mode === 'both' ? stats.totalAdds : stats.count} />
         </View>
 
         {/* Progresso (só se tem meta) */}
@@ -457,6 +537,12 @@ function CounterCard({
               <Ionicons name="arrow-undo" size={16} color="#818CF8" />
             </TouchableOpacity>
           )}
+          <TouchableOpacity 
+            style={[s.iconBtn, { borderColor: '#1E1B4B', backgroundColor: '#111113' }]} 
+            onPress={handleShare}
+          >
+            <Ionicons name="share-social-outline" size={16} color="#FAFAFA" />
+          </TouchableOpacity>
         </View>
 
         {/* Linha secundária: ações */}
@@ -478,7 +564,8 @@ function CounterCard({
         </View>
       </View>
     </Animated.View>
-  );
+  </Animated.View>
+);
 }
 
 // ── Tela principal ────────────────────────────────────────────────────────────
@@ -502,6 +589,10 @@ export default function HomeScreen() {
   const [newColor, setNewColor] = useState(COUNTER_COLORS[0]);
   const [newMode, setNewMode] = useState<CountMode>('streak');
   const [newGoal, setNewGoal] = useState<number | null>(30);
+  const [newFrequency, setNewFrequency] = useState<FrequencyType>('daily');
+  const [newSpecificDays, setNewSpecificDays] = useState<number[]>([]);
+  const [newRemEnabled, setNewRemEnabled] = useState(false);
+  const [newRemHour, setNewRemHour] = useState(20);
 
   const markedToday = dayCounters.filter((c) => getDayCounterStats(c).hasAddedToday).length;
   const total = dayCounters.length;
@@ -531,13 +622,27 @@ export default function HomeScreen() {
 
   const handleCreate = () => {
     if (!newName.trim()) { Alert.alert('Nome obrigatório'); return; }
-    addDayCounter(newName.trim(), newEmoji, newColor, newMode, newGoal);
+    addDayCounter(
+      newName.trim(), 
+      newEmoji, 
+      newColor, 
+      newMode, 
+      newGoal, 
+      newRemEnabled, 
+      newRemHour,
+      newFrequency,
+      newSpecificDays.length > 0 ? newSpecificDays : undefined
+    );
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     resetForm();
   };
 
   const resetForm = () => {
     setNewName(''); setNewEmoji('🎯'); setNewColor(COUNTER_COLORS[0]);
-    setNewMode('streak'); setNewGoal(30); setAddVisible(false);
+    setNewMode('streak'); setNewGoal(30); 
+    setNewFrequency('daily'); setNewSpecificDays([]);
+    setNewRemEnabled(false); setNewRemHour(20);
+    setAddVisible(false);
   };
 
   return (
@@ -660,40 +765,124 @@ export default function HomeScreen() {
               ))}
             </View>
 
-            <Text style={ms.label}>Modo</Text>
+<Text style={ms.label}>Modo</Text>
+          <View style={{ gap: 8, marginBottom: 20 }}>
+            {([
+              { m: 'streak' as CountMode, e: '🔥', t: 'Sequência', d: 'Dias consecutivos — perde um, volta a zero', ac: '#042F2E', bc: '#10B981' },
+              { m: 'simple' as CountMode, e: '📊', t: 'Contagem', d: 'Acumula todos os dias marcados, sem penalidade', ac: '#1E1B4B', bc: '#818CF8' },
+              { m: 'both' as CountMode, e: '⚡', t: 'Ambos', d: 'Mostra sequência E contagem total junta', ac: '#1F1607', bc: '#F59E0B' },
+            ]).map((opt) => (
+              <TouchableOpacity key={opt.m}
+                style={[ms.modeChip, newMode === opt.m && { borderColor: opt.bc, backgroundColor: opt.ac }]}
+                onPress={() => setNewMode(opt.m)} activeOpacity={0.8}>
+                <Text style={{ fontSize: 18 }}>{opt.e}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[ms.modeTitle, newMode === opt.m && { color: opt.bc }]}>{opt.t}</Text>
+                  <Text style={ms.modeDesc}>{opt.d}</Text>
+                </View>
+                <View style={[ms.radio, newMode === opt.m && { borderColor: opt.bc }]}>
+                  {newMode === opt.m && <View style={[ms.radioInner, { backgroundColor: opt.bc }]} />}
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+<Text style={ms.label}>Meta de dias</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 28 }}
+              contentContainerStyle={{ gap: 8 }}>
+              {GOAL_OPTIONS.map((g) => (
+              <TouchableOpacity key={String(g)}
+                style={[ms.goalChip, newGoal === g && { backgroundColor: newColor + '22', borderColor: newColor }]}
+                onPress={() => setNewGoal(g)}>
+                <Text style={[ms.goalChipText, newGoal === g && { color: newColor }]}>
+                  {g === null ? 'Sem meta' : `${g}d`}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+            <Text style={ms.label}>Frequência</Text>
             <View style={{ gap: 8, marginBottom: 20 }}>
               {([
-                { m: 'streak' as CountMode, e: '🔥', t: 'Sequência', d: 'Dias consecutivos — perde um, volta a zero', ac: '#042F2E', bc: '#10B981' },
-                { m: 'simple' as CountMode, e: '📊', t: 'Contagem', d: 'Acumula todos os dias marcados, sem penalidade', ac: '#1E1B4B', bc: '#818CF8' },
+                { f: 'daily' as FrequencyType, e: '📅', t: 'Diário', d: 'Todos os dias', color: '#10B981' },
+                { f: 'weekly' as FrequencyType, e: '📆', t: 'Semanal', d: '1x por semana', color: '#818CF8' },
+                { f: 'specificDays' as FrequencyType, e: '📋', t: 'Dias específicos', d: 'Escolha quais dias', color: '#F59E0B' },
               ]).map((opt) => (
-                <TouchableOpacity key={opt.m}
-                  style={[ms.modeChip, newMode === opt.m && { borderColor: opt.bc, backgroundColor: opt.ac }]}
-                  onPress={() => setNewMode(opt.m)} activeOpacity={0.8}>
+                <TouchableOpacity key={opt.f}
+                  style={[ms.modeChip, newFrequency === opt.f && { borderColor: opt.color, backgroundColor: opt.color + '18' }]}
+                  onPress={() => setNewFrequency(opt.f)} activeOpacity={0.8}>
                   <Text style={{ fontSize: 18 }}>{opt.e}</Text>
                   <View style={{ flex: 1 }}>
-                    <Text style={[ms.modeTitle, newMode === opt.m && { color: opt.bc }]}>{opt.t}</Text>
+                    <Text style={[ms.modeTitle, newFrequency === opt.f && { color: opt.color }]}>{opt.t}</Text>
                     <Text style={ms.modeDesc}>{opt.d}</Text>
                   </View>
-                  <View style={[ms.radio, newMode === opt.m && { borderColor: opt.bc }]}>
-                    {newMode === opt.m && <View style={[ms.radioInner, { backgroundColor: opt.bc }]} />}
+                  <View style={[ms.radio, newFrequency === opt.f && { borderColor: opt.color }]}>
+                    {newFrequency === opt.f && <View style={[ms.radioInner, { backgroundColor: opt.color }]} />}
                   </View>
                 </TouchableOpacity>
               ))}
             </View>
 
-            <Text style={ms.label}>Meta de dias</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 28 }}
-              contentContainerStyle={{ gap: 8 }}>
-              {GOAL_OPTIONS.map((g) => (
-                <TouchableOpacity key={String(g)}
-                  style={[ms.goalChip, newGoal === g && { backgroundColor: newColor + '22', borderColor: newColor }]}
-                  onPress={() => setNewGoal(g)}>
-                  <Text style={[ms.goalChipText, newGoal === g && { color: newColor }]}>
-                    {g === null ? 'Sem meta' : `${g}d`}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            {newFrequency === 'specificDays' && (
+              <View style={{ flexDirection: 'row', gap: 6, marginBottom: 24 }}>
+                {[
+                  { d: 0, l: 'D' },
+                  { d: 1, l: 'S' },
+                  { d: 2, l: 'T' },
+                  { d: 3, l: 'Q' },
+                  { d: 4, l: 'Q' },
+                  { d: 5, l: 'S' },
+                  { d: 6, l: 'S' },
+                ].map((day) => (
+                  <TouchableOpacity
+                    key={day.d}
+                    style={[
+                      ms.chip,
+                      newSpecificDays?.includes(day.d) && { backgroundColor: newColor + '20', borderColor: newColor }
+                    ]}
+                    onPress={() => {
+                      const current = newSpecificDays || [];
+                      const updated = current.includes(day.d)
+                        ? current.filter(d => d !== day.d)
+                        : [...current, day.d].sort();
+                      setNewSpecificDays(updated);
+                    }}
+                  >
+                    <Text style={{
+                      fontSize: 12,
+                      fontWeight: '700',
+                      color: newSpecificDays?.includes(day.d) ? newColor : '#71717A'
+                    }}>{day.l}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            <Text style={ms.label}>Lembrete Individual</Text>
+            <View style={ms.remCard}>
+            <View style={ms.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={ms.remTitle}>Ativar lembrete</Text>
+                <Text style={ms.remDesc}>Notificação diária para este contador</Text>
+              </View>
+              <Switch 
+                value={newRemEnabled} 
+                onValueChange={setNewRemEnabled}
+                trackColor={{ false: '#27272A', true: newColor }}
+                thumbColor={newRemEnabled ? '#FAFAFA' : '#52525B'}
+              />
+            </View>
+            {newRemEnabled && (
+               <View style={ms.hourGrid}>
+                 {[8, 12, 18, 20, 22].map(h => (
+                   <TouchableOpacity key={h} onPress={() => setNewRemHour(h)}
+                     style={[ms.hourChip, newRemHour === h && { backgroundColor: newColor + '20', borderColor: newColor }]}>
+                     <Text style={[ms.hourChipText, newRemHour === h && { color: newColor }]}>{h}h</Text>
+                   </TouchableOpacity>
+                 ))}
+               </View>
+            )}
+          </View>
 
             <View style={ms.btns}>
               <TouchableOpacity style={ms.cancelBtn} onPress={resetForm}>

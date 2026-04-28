@@ -2,168 +2,90 @@ import React from 'react';
 import {
   FlexWidget,
   TextWidget,
-  ImageWidget,
 } from 'react-native-android-widget';
 
 interface CounterWidgetProps {
-  totalCount: number;
-  goalDays: number;
-  hasAddedToday: boolean;
-  countMode?: 'streak' | 'simple';
+  totalCount?: number;
+  goalDays?: number;
+  hasAddedToday?: boolean;
+  countMode?: 'streak' | 'simple' | 'both';
 }
 
-export function CounterWidget({ totalCount, goalDays, hasAddedToday, countMode = 'streak' }: CounterWidgetProps) {
-  const percent = Math.min(Math.round((totalCount / goalDays) * 100), 100);
-  const isComplete = percent >= 100;
-
-  // Color palette
-  const accentColor = isComplete ? '#F59E0B' : hasAddedToday ? '#10B981' : '#818CF8';
-  const accentDim = isComplete ? '#78350F' : hasAddedToday ? '#065F46' : '#312E81';
-  const accentBg = isComplete ? '#292009' : hasAddedToday ? '#042F2E' : '#1E1B4B';
-
-  // Status emoji and text
-  const statusEmoji = isComplete ? '🏆' : hasAddedToday ? '✅' : countMode === 'streak' ? '🔥' : '📊';
-  const modeLabel = countMode === 'streak' ? 'SEQUÊNCIA' : 'CONTAGEM';
-
-  // Progress bar: use flex trick, ensure minimum visible fill
-  const fillFlex = percent > 0 ? percent : 0.5;
-  const emptyFlex = percent < 100 ? (100 - percent) : 0.5;
-  const showEmpty = percent < 100;
+export default function CounterWidget({ 
+  totalCount = 0, 
+  goalDays = 30, 
+  hasAddedToday = false, 
+  countMode = 'streak' 
+}: CounterWidgetProps) {
+  const displayCount = hasAddedToday ? totalCount : totalCount;
+  const safeGoal = goalDays && goalDays > 0 ? goalDays : 30;
+  const percent = safeGoal > 0 ? Math.min(Math.round((displayCount / safeGoal) * 100), 100) : 0;
+  
+  const colors = hasAddedToday 
+    ? { bg: '#042F2E', border: '#10B981', text: '#10B981' }
+    : { bg: '#1E1B4B', border: '#818CF8', text: '#818CF8' };
+  
+  const emoji = hasAddedToday ? '✅' : countMode === 'streak' ? '🔥' : '📊';
+  const label = countMode === 'streak' ? 'STREAK' : countMode === 'both' ? 'BOTH' : 'COUNT';
 
   return (
     <FlexWidget
       clickAction="OPEN_APP"
       style={{
-        height: 'match_parent',
-        width: 'match_parent',
         backgroundColor: '#09090B',
-        borderRadius: 24,
-        padding: 14,
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'space-between',
+        padding: 12,
+        borderRadius: 16,
       }}
     >
-      {/* ── Top row: mode label + status ── */}
-      <FlexWidget
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          width: 'match_parent',
-        }}
-      >
-        <TextWidget
-          text={modeLabel}
-          style={{
-            fontSize: 8,
-            fontWeight: 'bold',
-            color: '#52525B',
-            letterSpacing: 1,
-          }}
+      <FlexWidget style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <TextWidget text={label} style={{ color: '#71717A', fontSize: 9, fontWeight: 'bold' }} />
+        <TextWidget text={emoji} style={{ fontSize: 14 }} />
+      </FlexWidget>
+
+      <FlexWidget style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 8 }}>
+        <TextWidget 
+          text={`${displayCount}`} 
+          style={{ color: colors.text as any, fontSize: 28, fontWeight: 'bold' }} 
         />
-        <TextWidget
-          text={statusEmoji}
-          style={{
-            fontSize: 14,
-          }}
+        <TextWidget 
+          text="dias" 
+          style={{ color: colors.text as any, fontSize: 8, fontWeight: 'bold' }} 
         />
       </FlexWidget>
 
-      {/* ── Center: big count circle ── */}
-      <FlexWidget
-        style={{
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: accentBg,
-          borderRadius: 999,
-          width: 88,
-          height: 88,
-          borderWidth: 2,
-          borderColor: accentColor,
-        }}
-      >
-        <TextWidget
-          text={`${totalCount}`}
-          style={{
-            fontSize: 30,
-            fontWeight: 'bold',
-            color: accentColor,
-          }}
+      <FlexWidget style={{ flexDirection: 'row' }}>
+        <TextWidget 
+          text={`${percent}%`} 
+          style={{ color: colors.text as any, fontSize: 10, fontWeight: 'bold' }} 
         />
-        <TextWidget
-          text="DIAS"
-          style={{
-            fontSize: 8,
-            color: accentColor,
-            fontWeight: 'bold',
-            letterSpacing: 1,
-          }}
+        <TextWidget 
+          text={`/ ${safeGoal}d`} 
+          style={{ color: '#52525B', fontSize: 9 }} 
         />
       </FlexWidget>
 
-      {/* ── Percent label ── */}
-      <TextWidget
-        text={`${percent}% de ${goalDays}d`}
-        style={{
-          fontSize: 10,
-          color: accentColor,
-          fontWeight: 'bold',
-        }}
-      />
-
-      {/* ── Progress Bar ── */}
-      <FlexWidget
-        style={{
-          width: 'match_parent',
-          height: 5,
-          backgroundColor: '#1E1E24',
-          borderRadius: 3,
-          flexDirection: 'row',
-          overflow: 'hidden',
-        }}
-      >
-        <FlexWidget
-          style={{
-            flex: fillFlex,
-            height: 'match_parent',
-            backgroundColor: accentColor,
-            borderRadius: 3,
-          }}
-        />
-        {showEmpty && (
-          <FlexWidget
-            style={{
-              flex: emptyFlex,
-              height: 'match_parent',
-            }}
-          />
-        )}
+      <FlexWidget style={{ flexDirection: 'row', height: 4, borderRadius: 2 }}>
+        <FlexWidget style={{ flex: percent, backgroundColor: colors.text as any, height: '100%' }} />
+        <FlexWidget style={{ flex: 100 - percent, backgroundColor: '#27272A', height: '100%' }} />
       </FlexWidget>
 
-      {/* ── Action Button ── */}
-      <FlexWidget
+      <FlexWidget 
         clickAction={hasAddedToday ? 'OPEN_APP' : 'INCREMENT_COUNTER'}
-        style={{
-          width: 'match_parent',
-          backgroundColor: hasAddedToday ? '#18181B' : accentBg,
-          borderRadius: 12,
-          paddingVertical: 7,
+        style={{ 
+          backgroundColor: hasAddedToday ? '#18181B' : colors.bg as any, 
+          borderRadius: 8, 
+          paddingVertical: 6,
           borderWidth: 1,
-          borderColor: hasAddedToday ? '#27272A' : accentDim,
-          alignItems: 'center',
-          justifyContent: 'center',
+          borderColor: hasAddedToday ? '#27272A' : colors.border as any,
         }}
       >
-        <TextWidget
-          text={hasAddedToday ? '✓  CONCLUÍDO HOJE' : '+  MARCAR HOJE'}
-          style={{
-            fontSize: 9,
-            fontWeight: 'bold',
-            color: hasAddedToday ? '#3F3F46' : accentColor,
-            letterSpacing: 0.5,
-          }}
+        <TextWidget 
+          text={hasAddedToday ? '✓ Feito hoje' : '+ Marcar hoje'} 
+          style={{ 
+            color: hasAddedToday ? '#52525B' : colors.text as any, 
+            fontSize: 9, 
+            fontWeight: 'bold' 
+          }} 
         />
       </FlexWidget>
     </FlexWidget>
