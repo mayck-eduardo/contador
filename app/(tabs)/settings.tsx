@@ -5,9 +5,10 @@
 import React, { useState } from 'react';
 import {
   StyleSheet, View, Text, TouchableOpacity,
-  Switch, ScrollView, Alert,
+  Switch, ScrollView, Alert, Modal,
 } from 'react-native';
 import { useCounter } from '../../context/CounterContext';
+import { useTheme, ThemeMode } from '../../context/ThemeContext';
 import { ACHIEVEMENTS } from '../../utils/achievements';
 import { getDayCounterStatsStatic, calculateLevel, calculateXpProgress, LEVEL_THRESHOLDS } from '../../utils/counterUtils';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,6 +19,8 @@ import * as Haptics from 'expo-haptics';
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
 export default function SettingsScreen() {
+  const { themeMode, setThemeMode, colors } = useTheme();
+  const [showThemeModal, setShowThemeModal] = useState(false);
   const {
     dayCounters,
     notificationsEnabled,
@@ -106,8 +109,8 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScrollView style={s.container} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-      <Text style={s.title}>Configurações</Text>
+    <ScrollView style={[s.container, { backgroundColor: colors.background }]} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+      <Text style={[s.title, { color: colors.text }]}>Configurações</Text>
 
       {/* ── Resumo geral ── */}
       <View style={s.profileCard}>
@@ -149,6 +152,39 @@ export default function SettingsScreen() {
           </Text>
         </View>
       </View>
+
+      {/* ── Aparência ── */}
+      <Text style={[s.section, { color: colors.text }]}>🎨 Aparência</Text>
+      <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.cardBorder }]}>
+        <TouchableOpacity style={s.row} onPress={() => setShowThemeModal(true)}>
+          <View style={s.rowText}>
+            <Text style={[s.label, { color: colors.text }]}>Tema</Text>
+            <Text style={[s.sub, { color: colors.textSecondary }]}>{themeMode === 'dark' ? 'Escuro' : themeMode === 'light' ? 'Claro' : 'Seguir sistema'}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+        </TouchableOpacity>
+      </View>
+
+      <Modal visible={showThemeModal} transparent animationType="fade">
+        <View style={s.modalBg}>
+          <View style={[s.modalCard, { backgroundColor: colors.surface, borderColor: colors.cardBorder }]}>
+            <Text style={[s.modalTitle, { color: colors.text }]}>Escolha o Tema</Text>
+            {([
+              { id: 'dark', label: 'Escuro' },
+              { id: 'light', label: 'Claro' },
+              { id: 'auto', label: 'Seguir sistema' },
+            ] as { id: ThemeMode; label: string }[]).map((t) => (
+              <TouchableOpacity key={t.id} style={[s.themeOption, { backgroundColor: themeMode === t.id ? colors.primaryBg : colors.inputBg }]} onPress={() => { setThemeMode(t.id); setShowThemeModal(false); }}>
+                <Text style={[s.themeOptionText, { color: colors.text }]}>{t.label}</Text>
+                {themeMode === t.id && <Ionicons name="checkmark" size={20} color={colors.primary} />}
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={[s.themeCancel, { borderTopColor: colors.cardBorder }]} onPress={() => setShowThemeModal(false)}>
+              <Text style={[s.themeCancelText, { color: colors.primary }]}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Abas ── */}
       <Text style={s.section}>🗂️ Abas Visíveis</Text>
@@ -396,4 +432,13 @@ const s = StyleSheet.create({
   dataBtn: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 4 },
   dataBtnTitle: { fontSize: 14, fontWeight: '700', color: '#FAFAFA' },
   dataBtnSub: { fontSize: 11, color: '#52525B', marginTop: 1 },
+
+  // Theme modal
+  modalBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
+  modalCard: { margin: 24, borderRadius: 20, padding: 8, borderWidth: 1 },
+  modalTitle: { fontSize: 16, fontWeight: '700', padding: 16, textAlign: 'center' },
+  themeOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderRadius: 14 },
+  themeOptionText: { fontSize: 16, fontWeight: '600' },
+  themeCancel: { padding: 16, borderTopWidth: 1, alignItems: 'center', marginTop: 8 },
+  themeCancelText: { fontSize: 16, fontWeight: '600' },
 });
